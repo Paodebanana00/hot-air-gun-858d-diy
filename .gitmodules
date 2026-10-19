@@ -1,0 +1,3 @@
+[submodule "ChibiOS_Projects/ChibiOS"]
+	path = ChibiOS_Projects/ChibiOS
+	url = https://github.com/ChibiOS/ChibiOS
