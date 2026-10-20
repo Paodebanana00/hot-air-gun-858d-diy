@@ -1,5 +1,5 @@
 # Projeto
-PROJECT = teste_chibios
+PROJECT = hot-air-gun-858d-diy
 
 # Caminhos
 CHIBIOS = $(HOME)/Downloads/hot-air-gun-858d-diy/ChibiOS_Projects/ChibiOS
@@ -24,8 +24,8 @@ include $(CHIBIOS)/os/license/license.mk
 include $(CHIBIOS)/os/common/startup/ARMCMx/compilers/GCC/mk/startup_rp2040.mk
 
 # HAL e plataforma RP2040 do núcleo ChibiOS
-include $(CHIBIOS)/os/hal/hal.mk
-include $(CHIBIOS)/os/hal/ports/RP/RP2040/platform.mk
+include $(CHIBIOS_CONTRIB)/os/hal/hal.mk
+include $(CHIBIOS_CONTRIB)/os/hal/ports/RP/RP2040/platform.mk
 include $(CHIBIOS)/os/hal/boards/RP_PICO_RP2040/board.mk
 
 # Kernel
@@ -35,9 +35,12 @@ include $(CHIBIOS)/os/common/ports/ARMv6-M/compilers/GCC/mk/port_rp2.mk
 
 # Fontes
 CSRC = $(ALLCSRC) \
-       $(CHIBIOS_CONTRIB)/os/hal/src/hal_community.c \
+       $(CHIBIOS)/os/hal/lib/streams/chprintf.c \
        main.c \
-       c1_main.c
+       c1_main.c \
+       module/thermocouple.c \
+       module/usbcfg.c
+
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
 ASMXSRC = $(ALLXASMSRC)	
@@ -49,8 +52,13 @@ UINCDIR =
 ULIBDIR =
 ULIBS =
 
-INCDIR = $(CONFDIR) $(ALLINC) \
-         $(HOME)/Downloads/hot-air-gun-858d-diy/ChibiOS_Projects/ChibiOS-Contrib/os/hal/include
+INCDIR = module \
+         drives_max6675 \
+         $(CONFDIR) \
+         $(ALLINC) \
+         $(CHIBIOS_CONTRIB)/os/hal/include \
+         $(CHIBIOS)/os/hal/lib/streams \
+         $(CHIBIOS_CONTRIB)/os/hal/ports/RP/LLD/USBDv1
 
 # Linker
 LDSCRIPT = $(STARTUPLD)/RP2040_FLASH.ld
