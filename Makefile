@@ -54,7 +54,8 @@ CSRC = $(sort \
     c1_main.c \
     module/thermocouple.c \
     module/usbcfg.c \
-    module/potentiometers.c)
+    module/potentiometers.c\
+    module/convert/potentiometer_converter.c)
 
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)

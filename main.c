@@ -1,12 +1,10 @@
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
-
+#include "module/convert/potentiometer_converter.h"
 #include "module/usb_cdc.h"
 #include "module/thermocouple.h"
-#include "module/potentiometers.h"
 #include "usbcfg.h"
-
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -19,8 +17,7 @@ uint16_t pot28 = 0U;
 usb_cdc_start();
 thermocouple_start();
 
-/* Inicializa o ADC dos potenciômetros. */
-potentiometers_start();
+
 
 while (true) {
     float temperature = 0.0f;
@@ -54,22 +51,20 @@ while (true) {
         } else {
             chprintf((BaseSequentialStream *)&SDU1,
                      "TEMP=INVALID\r\n");
-        }
-
-        /* Lê e imprime os dois potenciômetros. */
-        if (potentiometers_read(&pot27, &pot28)) {
-            chprintf((BaseSequentialStream *)&SDU1,
-                     "GP27: %u | GP28: %u\r\n",
-                     (unsigned int)pot27,
-                     (unsigned int)pot28);
-        } else {
-            chprintf((BaseSequentialStream *)&SDU1,
-                     "Erro na leitura ADC\r\n");
-        }
-
-        chprintf((BaseSequentialStream *)&SDU1, "\r\n");
     }
+        int meu_setpoint = poten();
 
+        // Agora você pode usar ou imprimir o valor retornado
+        chprintf((BaseSequentialStream *)&SDU1, "Setpoint de Temperatura: %d C\r\n", meu_setpoint);
+
+        int fan_setpoint = raw_fan();
+
+        // Agora você pode usar ou imprimir o valor retornado
+        chprintf((BaseSequentialStream *)&SDU1, "Setpoint de velocidade: %d\r\n", fan_setpoint);
+        }
     chThdSleepMilliseconds(500);
+
+
 }
+
 }
