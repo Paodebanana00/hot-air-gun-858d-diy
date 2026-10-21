@@ -1,13 +1,21 @@
-#ifndef MAX6675_CHIBIOS_H
-#define MAX6675_CHIBIOS_H
+#ifndef MAX6675_H
+#define MAX6675_H
 
 #include "ch.h"
 #include "hal.h"
+
 #include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #define MAX6675_OK             0U
-#define MAX6675_OPEN_CIRCUIT   4U
-#define MAX6675_NO_READING     128U
+#define MAX6675_OPEN_CIRCUIT   1U
+#define MAX6675_NO_READING     2U
+
+/* Raspberry Pi Pico / RP2040 */
+#define MAX6675_CS_LINE        PAL_LINE(0U, 13U)
+#define MAX6675_SCK_LINE       PAL_LINE(0U, 14U)
+#define MAX6675_MISO_LINE      PAL_LINE(0U, 12U)
 
 typedef struct {
     SPIDriver *spi;
@@ -15,62 +23,63 @@ typedef struct {
     float offset;
     float temperature;
     uint8_t status;
+    uint16_t raw;
 } max6675_t;
 
-/*
- * O SPI precisa estar previamente configurado para:
- * - 8 bits por frame
- * - CPOL = 0
- * - CPHA = 0 (SPI Mode 0)
- * - MSB primeiro
- * - Clock conservador, por exemplo 500 kHz
- *
- * A compatibilidade exata de SPIConfig depende da versão
- * do ChibiOS e do port de hardware utilizado.
- */
 static inline void max6675_init(max6675_t *sensor,
                                 SPIDriver *spi,
-                                ioline_t cs)
+                                ioline_t cs_line)
 {
+    if (sensor == NULL || spi == NULL) {
+        return;
+    }
+
     sensor->spi = spi;
-    sensor->cs_line = cs;
+    sensor->cs_line = cs_line;
     sensor->offset = 0.0f;
     sensor->temperature = 0.0f;
     sensor->status = MAX6675_NO_READING;
+    sensor->raw = 0U;
 
-    palSetLineMode(cs, PAL_MODE_OUTPUT_PUSHPULL);
-    palSetLine(cs);
+    /* GP14 = SPI1 SCK; GP12 = SPI1 RX/MISO. */
+    palSetLineMode(MAX6675_SCK_LINE, PAL_MODE_ALTERNATE(1U));
+    palSetLineMode(MAX6675_MISO_LINE, PAL_MODE_ALTERNATE(1U));
+
+    /* CS fica sob controle manual. */
+    palSetLineMode(cs_line, PAL_MODE_OUTPUT_PUSHPULL);
+    palSetLine(cs_line);
 }
 
 static inline void max6675_set_offset(max6675_t *sensor,
                                       float offset)
 {
-    sensor->offset = offset;
+    if (sensor != NULL) {
+        sensor->offset = offset;
+    }
 }
 
 static inline uint8_t max6675_read(max6675_t *sensor)
 {
-    uint8_t tx[2] = {0x00, 0x00};
-    uint8_t rx[2] = {0x00, 0x00};
+    uint8_t tx[2] = {0x00U, 0x00U};
+    uint8_t rx[2] = {0x00U, 0x00U};
     uint16_t raw;
 
-    /*
-     * O MAX6675 não recebe comandos:
-     * os bytes transmitidos apenas geram os clocks.
-     */
-    spiAcquireBus(sensor->spi);
+    if (sensor == NULL || sensor->spi == NULL) {
+        return MAX6675_NO_READING;
+    }
 
+    sensor->status = MAX6675_NO_READING;
+
+    /* O MAX6675 disponibiliza uma palavra de 16 bits. */
     palClearLine(sensor->cs_line);
-    spiSelect(sensor->spi);
+    chThdSleepMicroseconds(2U);
 
-    spiExchange(sensor->spi, 2, tx, rx);
+    spiExchange(sensor->spi, 2U, tx, rx);
 
-    spiUnselect(sensor->spi);
     palSetLine(sensor->cs_line);
 
-    spiReleaseBus(sensor->spi);
-
-    raw = ((uint16_t)rx[0] << 8) | rx[1];
+    raw = ((uint16_t)rx[0] << 8U) | (uint16_t)rx[1];
+    sensor->raw = raw;
 
     /* D2 = 1: termopar aberto/desconectado. */
     if ((raw & 0x0004U) != 0U) {
@@ -78,17 +87,20 @@ static inline uint8_t max6675_read(max6675_t *sensor)
         return sensor->status;
     }
 
-    /* D14:D3 contêm a temperatura em incrementos de 0,25 °C. */
     sensor->temperature =
-        (float)((raw >> 3) & 0x0FFFU) * 0.25f;
+        (float)((raw >> 3U) & 0x0FFFU) * 0.25f;
 
     sensor->status = MAX6675_OK;
     return sensor->status;
 }
 
-static inline float max6675_get_celsius(max6675_t *sensor)
+static inline float max6675_get_celsius(const max6675_t *sensor)
 {
+    if (sensor == NULL) {
+        return 0.0f;
+    }
+
     return sensor->temperature + sensor->offset;
 }
 
-#endif
+#endif /* MAX6675_H */
