@@ -7,6 +7,7 @@ CHIBIOS_CONTRIB = $(HOME)/Downloads/hot-air-gun-858d-diy/ChibiOS_Projects/ChibiO
 CONFDIR = ./cfg
 BUILDDIR = ./build
 DEPDIR = $(BUILDDIR)/.dep
+BOARDPATH = $(CHIBIOS)/os/hal/boards/RP_PICO_RP2040
 
 # Compilador
 MCU = cortex-m0plus
@@ -67,6 +68,7 @@ LDSCRIPT = $(STARTUPLD)/RP2040_FLASH.ld
 RULESPATH = $(CHIBIOS)/os/common/startup/ARMCMx/compilers/GCC/mk
 include $(RULESPATH)/arm-none-eabi.mk
 include $(RULESPATH)/rules.mk
+include $(BOARDPATH)/board.mk
 
 # Geração do UF2
 PICOTOOL ?= $(CURDIR)/pico-kit-compile/picotool
