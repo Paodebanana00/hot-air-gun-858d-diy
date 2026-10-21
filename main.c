@@ -1,30 +1,21 @@
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
-#include "usbcfg.h"
+
+#include "module/usb_cdc.h"
 #include "module/thermocouple.h"
+#include "usbcfg.h"
+
+#include <stdbool.h>
+#include <stdint.h>
 
 int main(void)
 {
     halInit();
     chSysInit();
 
-    usbDisconnectBus(serusbcfg.usbp);
-    chThdSleepMilliseconds(1000);
-
-    sduObjectInit(&SDU1);
-    sduStart(&SDU1, &serusbcfg);
-
-    usbStart(serusbcfg.usbp, &usbcfg);
-    chThdSleepMilliseconds(100);
-
-    usbConnectBus(serusbcfg.usbp);
-    chThdSleepMilliseconds(500);
-
+    usb_cdc_start();
     thermocouple_start();
 
     while (true) {
