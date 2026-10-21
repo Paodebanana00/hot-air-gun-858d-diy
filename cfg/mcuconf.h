@@ -41,6 +41,7 @@
 /*
  * IRQ system settings.
  */
+#define RP_IRQ_ADC1_PRIORITY                2
 #define RP_IRQ_SYSTICK_PRIORITY             2
 #define RP_IRQ_TIMER_ALARM0_PRIORITY        2
 #define RP_IRQ_TIMER_ALARM1_PRIORITY        2
@@ -91,5 +92,7 @@
 #define RP_USB_FORCE_VBUS_DETECT            TRUE
 #define RP_USE_EXTERNAL_VBUS_DETECT         FALSE
 #define RP_USB_USE_ERROR_DATA_SEQ_INTR      TRUE
+
+#define RP_ADC_USE_ADC1 TRUE
 
 #endif /* MCUCONF_H */
