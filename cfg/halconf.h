@@ -546,6 +546,8 @@
 #define WSPI_USE_MUTUAL_EXCLUSION           TRUE
 #endif
 
+#define RP_USB_USE_BOOTSEL_RESET TRUE
+
 #include "halconf_community.h"
 
 #endif /* HALCONF_H */

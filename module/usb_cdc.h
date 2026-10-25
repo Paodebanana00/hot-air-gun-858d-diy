@@ -4,9 +4,9 @@
 #include "ch.h"
 #include "hal.h"
 #include "usbcfg.h"
-
+void usb_cdc_handler_init(void);
 static inline void usb_cdc_start(void)
-{
+{   
     usbDisconnectBus(serusbcfg.usbp);
     chThdSleepMilliseconds(1000);
 

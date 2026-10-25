@@ -1,8 +1,8 @@
 
 PROJECT = hot-air-gun-858d-diy
 
-CHIBIOS = $(HOME)/Downloads/hot-air-gun-858d-diy/ChibiOS_Projects/ChibiOS
-CHIBIOS_CONTRIB = $(HOME)/Downloads/hot-air-gun-858d-diy/ChibiOS_Projects/ChibiOS-Contrib
+CHIBIOS ?= $(CURDIR)/ChibiOS_Projects/ChibiOS
+CHIBIOS_CONTRIB ?= $(CURDIR)/ChibiOS_Projects/ChibiOS-Contrib
 
 CONFDIR = ./cfg
 BUILDDIR = ./build
@@ -55,7 +55,10 @@ CSRC = $(sort \
     module/thermocouple.c \
     module/usbcfg.c \
     module/potentiometers.c\
-    module/convert/potentiometer_converter.c)
+    module/convert/potentiometer_converter.c\
+    module/json/usb_cdc_handler.c\
+    module/pwm/pwm_fan.c\
+    module/bootloader/rp2040.c)
 
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
@@ -92,10 +95,25 @@ include $(RULESPATH)/arm-none-eabi.mk
 include $(RULESPATH)/rules.mk
 
 # Geração UF2
-PICOTOOL ?= $(CURDIR)/pico-kit-compile/picotool
+PICOTOOL ?= picotool
 
 $(BUILDDIR)/$(PROJECT).uf2: $(BUILDDIR)/$(PROJECT).elf
 	$(PICOTOOL) uf2 convert $< $@
 
-.PHONY: uf2
+.PHONY: uf2 flash
+
+CDC_PORT ?= /dev/ttyACM0
+BOOTSEL_WAIT ?= 4
+
 uf2: $(BUILDDIR)/$(PROJECT).uf2
+
+flash: $(BUILDDIR)/$(PROJECT).uf2
+	@echo "Enviando comando JSON para entrar em BOOTSEL..."
+	@python3 -c 'import serial, time; s = serial.Serial("$(CDC_PORT)", 115200, timeout=1); time.sleep(0.1); s.write(b"{\"comando\":\"reboot\"}\r\n"); s.flush(); time.sleep(0.2); s.close()'
+	@echo "Aguardando a Pico entrar em BOOTSEL..."
+	@sleep $(BOOTSEL_WAIT)
+	@echo "Gravando firmware UF2..."
+	$(PICOTOOL) load -f $(BUILDDIR)/$(PROJECT).uf2
+	@sleep 1
+	@echo "Reiniciando a aplicação..."
+	$(PICOTOOL) reboot -a
