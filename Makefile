@@ -58,7 +58,9 @@ CSRC = $(sort \
     module/convert/potentiometer_converter.c\
     module/json/usb_cdc_handler.c\
     module/pwm/pwm_fan.c\
-    module/bootloader/rp2040.c)
+    module/bootloader/rp2040.c\
+    module/triac/triac_drive.c\
+    module/switchs/switchs.c)
 
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
@@ -83,7 +85,8 @@ INCDIR = $(CONFDIR) \
          $(CHIBIOS_CONTRIB)/os/hal/include \
          module \
          drives_max6675 \
-         $(CHIBIOS)/os/hal/lib/streams
+         $(CHIBIOS)/os/hal/lib/streams\
+         egine
 
 # Linker
 LDSCRIPT = $(STARTUPLD)/RP2040_FLASH.ld
@@ -103,13 +106,13 @@ $(BUILDDIR)/$(PROJECT).uf2: $(BUILDDIR)/$(PROJECT).elf
 .PHONY: uf2 flash
 
 CDC_PORT ?= /dev/ttyACM0
-BOOTSEL_WAIT ?= 4
+BOOTSEL_WAIT ?= 2
 
 uf2: $(BUILDDIR)/$(PROJECT).uf2
 
 flash: $(BUILDDIR)/$(PROJECT).uf2
 	@echo "Enviando comando JSON para entrar em BOOTSEL..."
-	@python3 -c 'import serial, time; s = serial.Serial("$(CDC_PORT)", 115200, timeout=1); time.sleep(0.1); s.write(b"{\"comando\":\"reboot\"}\r\n"); s.flush(); time.sleep(0.2); s.close()'
+	@python3 -c "import serial, time; s = serial.Serial('$(CDC_PORT)', 115200, timeout=1); time.sleep(0.1); s.write(b'{\"comando\":\"reboot\"}\r\n'); s.flush(); time.sleep(2.0); s.close()"
 	@echo "Aguardando a Pico entrar em BOOTSEL..."
 	@sleep $(BOOTSEL_WAIT)
 	@echo "Gravando firmware UF2..."
