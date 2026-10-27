@@ -56,7 +56,7 @@ void station_control_process(const core0_state_t *hardware, core1_commands_t *co
 
     // MÁQUINA DE ESTADOS DO PROJETO
     switch (estado_atual) {
-        
+
         case ESTADO_DESLIGADO:
             commands->triac_power_command = 0;
             commands->fan_pwm_command = 0;
@@ -77,22 +77,24 @@ void station_control_process(const core0_state_t *hardware, core1_commands_t *co
             if (hardware->button_state_2 == 0U) {
                 estado_atual = ESTADO_EM_OPERACAO;
             }
+
             // Se o usuário desligar a chave principal
             if (hardware->button_state_1 == 0U) {
                 estado_atual = ESTADO_DESLIGADO;
             }
             break;
 
-        case ESTADO_EM_OPERACAO:
+        case ESTADO_EM_OPERACAO: {
             commands->shutdown_requested = false;
-            
+
             // Aplica a velocidade decidida (seja remota ou do potenciômetro)
             uint32_t cooler_pwm = fan_final;
-            
+
             // PROTEÇÃO: Força um limite mínimo para o cooler não parar enquanto esquenta
             if (cooler_pwm < 1200U) {
-                cooler_pwm = 1200U; 
+                cooler_pwm = 1200U;
             }
+
             commands->fan_pwm_command = cooler_pwm;
 
             // Calcula o PID dinâmico do TRIAC para buscar o setpoint_final
@@ -102,11 +104,13 @@ void station_control_process(const core0_state_t *hardware, core1_commands_t *co
             if (hardware->button_state_2 == 1U) {
                 estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
             }
+
             // Se desligar a chave geral no meio do uso, vai para o resfriamento seguro!
             if (hardware->button_state_1 == 0U) {
                 estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
             }
             break;
+        }
 
         case ESTADO_RESFRIAMENTO_SEGURO:
             commands->triac_power_command = 0; // CALOR CORTADO TOTALMENTE

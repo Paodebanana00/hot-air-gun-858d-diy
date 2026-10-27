@@ -83,22 +83,17 @@ int main(void)
         /* 2. Publica os dados físicos para o Core 1. */
         core0_publish_state(&hw_state);
 
-        /* 3. Recebe e aplica os comandos da engine. */
         if (core1_read_commands(&commands)) {
             uint32_t power = commands.triac_power_command;
             uint32_t fan_pwm = commands.fan_pwm_command;
 
-            /*
-             * Proteção básica:
-             * falha na leitura da temperatura desliga o aquecimento.
-             */
             if (!valid || hw_state.hardware_faults != 0U) {
                 power = 0U;
+                fan_pwm = 4095U;
             }
 
             if (commands.shutdown_requested) {
                 power = 0U;
-                fan_pwm = 4095U;
             }
 
             if (power > 100U) {
