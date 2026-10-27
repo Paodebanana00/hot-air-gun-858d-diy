@@ -1,97 +1,121 @@
 #include "ch.h"
 #include "hal.h"
-#include "chprintf.h"
-#include "usbcfg.h"
-#include "module/switchs/switchs.h"
 
-// Definição direta do registrador SIO_CPUID do hardware da Raspberry Pi Pico
-#define SIO_CPUID (*((volatile uint32_t *)(0xd0000000 + 0x000)))
+#include "module/engine/engine_shared.h"
+#include "module/engine/station_control.h" // Inclui o novo controlador separado
 
-/* Thread executada no núcleo 1 para Diagnóstico e Relatório de Tela */
-static THD_WORKING_AREA(waThreadCore1, 256);
+#include <stdbool.h>
+#include <stdint.h>
 
-static THD_FUNCTION(ThreadCore1, arg) {
-  (void)arg;
-  chRegSetThreadName("core1_diagnostic");
+/* ============================================================
+ * THREAD 1: ENGINE (PROCESSA A MÁQUINA DE ESTADOS E PID)
+ * ============================================================ */
 
-  while (true) {
-    /* Se a USB estiver ativa, o Core 1 faz o print de tudo sem conflito */
-    if ((SDU1.config != NULL) && (serusbcfg.usbp->state == USB_ACTIVE)) {
-        int id_core_atual = (int)SIO_CPUID; 
-        
-        // 1. Print de Alerta de Hardware do Núcleo 1
-        chprintf((BaseSequentialStream *)&SDU1, 
-                 ">>> [ALERTA DE HARDWARE] Ola do Nucleo %d! Rodando em paralelo real.\r\n", 
-                 id_core_atual);
-                 
-        // 2. JUNÇÃO PERFEITA: Print dos botões na mesma thread de tela
-        chprintf((BaseSequentialStream *)&SDU1, 
-                 "[NUCLEO 1] Botoes -> Estado 1: %d | Estado 2: %d\r\n\r\n", 
-                 estado_sistema_1, 
-                 estado_sistema_2);
-    }
+static THD_WORKING_AREA(waEngineThread, 512);
 
-    // Delay de 500ms para você conseguir ler o terminal confortavelmente
-    chThdSleepMilliseconds(500);
-  }
-}
-
-
-/* Thread de leitura dos botões (Background) */
-static THD_WORKING_AREA(waThreadBotoes, 128);
-
-static THD_FUNCTION(ThreadBotoes, arg) {
+static THD_FUNCTION(EngineThread, arg) {
     (void)arg;
-    chRegSetThreadName("leitura_botoes");
-    
-    // Inicializa os pinos (Pull-up e Pull-down) assim que a Thread nasce
-    botoes_init();
+
+    chRegSetThreadName("engine_logic");
+
+    core0_state_t hardware = {0};
+    core1_commands_t commands = {0};
 
     while (true) {
-        // Executa a leitura física e o debounce dos pinos no RP2040
-        processar_botoes();
-        
-        // Dorme por 30ms (Tempo ideal de debounce para não perder cliques)
-        // O chprintf pesado foi removido daqui para não travar a USB!
-        chThdSleepMilliseconds(30); 
+        /* Recebe o estado físico publicado pelo Core 0 (Sensores, Potenciômetros e Botões). */
+        core0_read_state(&hardware);
+
+        /* 
+         * Executa a lógica modular da estação (PID, Estados e Proteções).
+         * Altera as variáveis commands.triac_power_command e commands.fan_pwm_command internamente.
+         */
+        station_control_process(&hardware, &commands);
+
+        /* Atualiza os dados comuns de controle */
+        commands.target_temperature_centi = hardware.temperature_setpoint * 100;
+        commands.sequence++;
+
+        /* Publica os comandos calculados para o Core 0 aplicar no hardware físico. */
+        core1_publish_commands(&commands);
+
+        chThdSleepMilliseconds(20);
     }
 }
 
 
-/*
- * Ponto de entrada obrigatório do hardware do RP2040 para o núcleo 1.
- */
+/* ============================================================
+ * THREAD 2: DIAGNÓSTICO
+ * ============================================================ */
+
+static THD_WORKING_AREA(waDiagnosticThread, 512);
+
+static THD_FUNCTION(DiagnosticThread, arg) {
+    (void)arg;
+
+    chRegSetThreadName("core1_diagnostic");
+
+    core0_state_t hardware = {0};
+    core1_diagnostic_t diagnostic = {0};
+
+    while (true) {
+        /* Lê o estado físico publicado pelo Core 0. */
+        core0_read_state(&hardware);
+
+        /*
+         * Copia o snapshot recebido para a estrutura de diagnóstico.
+         * Não imprime pela USB neste núcleo.
+         */
+        diagnostic.sequence = hardware.sequence;
+        diagnostic.temperature_centi = hardware.temperature_centi;
+        diagnostic.temperature_valid = hardware.temperature_valid;
+        diagnostic.thermocouple_raw = hardware.thermocouple_raw;
+        diagnostic.thermocouple_status = hardware.thermocouple_status;
+        diagnostic.fan_pot_raw = hardware.fan_pot_raw;
+        diagnostic.temperature_setpoint = hardware.temperature_setpoint;
+        
+        // Mantém atualizados os estados de entrada que você lê no terminal
+        diagnostic.button_state_1 = hardware.button_state_1;
+        diagnostic.button_state_2 = hardware.button_state_2;
+        diagnostic.hardware_faults = hardware.hardware_faults;
+
+        /* Publica os dados que o Core 0 deverá capturar e imprimir via JSON pela USB. */
+        core1_publish_diagnostic(&diagnostic);
+
+        chThdSleepMilliseconds(500);
+    }
+}
+
+
+/* ============================================================
+ * ENTRADA DO CORE 1
+ * ============================================================ */
+
 void c1_main(void) {
+    chSysWaitSystemState(ch_sys_running);
 
-  /* Aguarda a inicialização do sistema no núcleo 0. */
-  chSysWaitSystemState(ch_sys_running);
+    chInstanceObjectInit(&ch1, &ch_core1_cfg);
 
-  /* Inicializa a instância do kernel neste núcleo. */
-  chInstanceObjectInit(&ch1, &ch_core1_cfg);
+    chSysUnlock();
 
-  /* Libera o núcleo após a inicialização. */
-  chSysUnlock();
+    /* Cria a tarefa lógica principal com maior prioridade de agendamento */
+    chThdCreateStatic(
+        waEngineThread,
+        sizeof(waEngineThread),
+        NORMALPRIO + 1,
+        EngineThread,
+        NULL
+    );
 
-  /* ----------------------------------------------------------------------- */
-  /* START DAS THREADS NO NÚCLEO 1                                           */
-  /* ----------------------------------------------------------------------- */
+    /* Cria a tarefa de diagnóstico e telemetria */
+    chThdCreateStatic(
+        waDiagnosticThread,
+        sizeof(waDiagnosticThread),
+        NORMALPRIO,
+        DiagnosticThread,
+        NULL
+    );
 
-  /* 1. Cria a thread de diagnóstico e exibição de tela */
-  chThdCreateStatic(waThreadCore1,
-                    sizeof(waThreadCore1),
-                    NORMALPRIO,
-                    ThreadCore1,
-                    NULL);
-
-  /* 2. CORREÇÃO: Dá o start na Thread dos botões! Agora ela vai rodar */
-  chThdCreateStatic(waThreadBotoes,
-                    sizeof(waThreadBotoes),
-                    NORMALPRIO + 1, // Prioridade levemente maior para ler os botões rápido
-                    ThreadBotoes,
-                    NULL);
-
-  /* Mantém a thread principal do núcleo 1 activa. */
-  while (true) {
-    chThdSleepMilliseconds(1000);
-  }
+    while (true) {
+        chThdSleepMilliseconds(1000);
+    }
 }

@@ -60,7 +60,10 @@ CSRC = $(sort \
     module/pwm/pwm_fan.c\
     module/bootloader/rp2040.c\
     module/triac/triac_drive.c\
-    module/switchs/switchs.c)
+    module/switchs/switchs.c\
+    module/engine/engine_shared.c\
+    module/engine/station_control.c\
+    module/pid/pid.c)
 
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
@@ -85,8 +88,8 @@ INCDIR = $(CONFDIR) \
          $(CHIBIOS_CONTRIB)/os/hal/include \
          module \
          drives_max6675 \
-         $(CHIBIOS)/os/hal/lib/streams\
-         egine
+         $(CHIBIOS)/os/hal/lib/streams
+         
 
 # Linker
 LDSCRIPT = $(STARTUPLD)/RP2040_FLASH.ld

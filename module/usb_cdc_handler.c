@@ -1,4 +1,3 @@
-
 #include "ch.h"
 #include "hal.h"
 #include "string.h"
@@ -18,11 +17,10 @@
 static char rx_buffer[JSON_MAX_LEN];
 static uint16_t rx_index = 0;
 
-
-// =====================================================
-// COMANDOS DISPONÍVEIS
-// Para adicionar um comando, inclua-o aqui.
-// =====================================================
+// Variáveis compartilhadas de controle remoto
+volatile bool remote_control_active = false;
+volatile int32_t remote_setpoint = 0;
+volatile uint32_t remote_fan_speed = 0;
 
 typedef enum {
     CMD_DESCONHECIDO = 0,
@@ -38,38 +36,25 @@ typedef enum {
 // COMPARAÇÃO E LEITURA DO JSON
 // =====================================================
 
-static int json_equal(const char *json,
-                      const jsmntok_t *tok,
-                      const char *s)
+static int json_equal(const char *json, const jsmntok_t *tok, const char *s)
 {
     return tok->type == JSMN_STRING &&
            (int)strlen(s) == tok->end - tok->start &&
-           strncmp(json + tok->start, s,
-                   tok->end - tok->start) == 0
+           strncmp(json + tok->start, s, tok->end - tok->start) == 0
            ? 0 : -1;
 }
 
-
-// Localiza um campo de primeiro nível no objeto JSON.
-// Adequado para este protocolo de campos simples.
-static jsmntok_t *json_get_field(const char *json,
-                                 jsmntok_t *tokens,
-                                 int count,
-                                 const char *field)
+static jsmntok_t *json_get_field(const char *json, jsmntok_t *tokens, int count, const char *field)
 {
     for (int i = 1; i < count - 1; i++) {
         if (json_equal(json, &tokens[i], field) == 0) {
             return &tokens[i + 1];
         }
     }
-
     return NULL;
 }
 
-
-static bool json_get_int(const char *json,
-                         const jsmntok_t *tok,
-                         int *result)
+static bool json_get_int(const char *json, const jsmntok_t *tok, int *result)
 {
     if (tok == NULL || tok->type != JSMN_PRIMITIVE) {
         return false;
@@ -88,9 +73,7 @@ static bool json_get_int(const char *json,
     char *endptr;
     long value = strtol(buf, &endptr, 10);
 
-    if (*endptr != '\0' ||
-        value < -2147483647L - 1 ||
-        value > 2147483647L) {
+    if (*endptr != '\0' || value < -2147483647L - 1 || value > 2147483647L) {
         return false;
     }
 
@@ -98,107 +81,64 @@ static bool json_get_int(const char *json,
     return true;
 }
 
-
-// =====================================================
-// IDENTIFICAÇÃO DO COMANDO
-// =====================================================
-
-static comando_t identificar_comando(const char *json,
-                                     jsmntok_t *tok)
+static comando_t identificar_comando(const char *json, jsmntok_t *tok)
 {
-    if (json_equal(json, tok, "reboot") == 0)
-        return CMD_REBOOT;
-
-    if (json_equal(json, tok, "setpoint") == 0)
-        return CMD_SETPOINT;
-
-    if (json_equal(json, tok, "fan_speed") == 0)
-        return CMD_FAN_SPEED;
-
-    if (json_equal(json, tok, "heater") == 0)
-        return CMD_HEATER;
-
-    if (json_equal(json, tok, "stop") == 0)
-        return CMD_STOP;
+    if (json_equal(json, tok, "reboot") == 0)    return CMD_REBOOT;
+    if (json_equal(json, tok, "setpoint") == 0)  return CMD_SETPOINT;
+    if (json_equal(json, tok, "fan_speed") == 0) return CMD_FAN_SPEED;
+    if (json_equal(json, tok, "heater") == 0)    return CMD_HEATER;
+    if (json_equal(json, tok, "stop") == 0)      return CMD_STOP;
 
     return CMD_DESCONHECIDO;
 }
 
-
 // =====================================================
 // FUNÇÕES DE CADA COMANDO
-// Implemente o controle real do seu hardware aqui.
 // =====================================================
 
 static void cmd_reboot(void)
 {
-bootloader_jump();
+    bootloader_jump();
 }
 
 static void cmd_setpoint(int valor)
 {
-    (void)valor;
+    remote_setpoint = (int32_t)valor;
+    remote_control_active = true; // Interface assume o controle
 }
 
 static void cmd_fan_speed(int valor)
 {
-    (void)valor;
+    remote_fan_speed = (uint32_t)valor;
+    remote_control_active = true; // Interface assume o controle
 }
 
 static void cmd_heater(int valor)
 {
-    (void)valor;
+    // Pode ser usado para ligar/desligar remotamente mudando o setpoint
+    if (valor == 0) {
+        remote_setpoint = 0;
+    }
 }
 
 static void cmd_stop(void)
 {
+    remote_setpoint = 0;
+    remote_fan_speed = 0;
+    remote_control_active = true;
 }
 
-
-
-// =====================================================
-// EXECUTOR CENTRAL: CADA CASE CHAMA SUA FUNÇÃO
-// =====================================================
-
-static void executar_comando(comando_t cmd, int valor,
-                             bool tem_valor)
+static void executar_comando(comando_t cmd, int valor, bool tem_valor)
 {
     switch (cmd) {
-
-        case CMD_REBOOT:
-            cmd_reboot();
-            break;
-
-        case CMD_SETPOINT:
-            if (tem_valor)
-                cmd_setpoint(valor);
-            break;
-
-        case CMD_FAN_SPEED:
-            if (tem_valor)
-                cmd_fan_speed(valor);
-            break;
-
-        case CMD_HEATER:
-            if (tem_valor)
-                cmd_heater(valor);
-            break;
-
-        case CMD_STOP:
-            cmd_stop();
-            break;
-
-        case CMD_DESCONHECIDO:
-        default:
-            // Comando desconhecido: ignorar.
-            break;
+        case CMD_REBOOT:    cmd_reboot(); break;
+        case CMD_SETPOINT:  if (tem_valor) cmd_setpoint(valor); break;
+        case CMD_FAN_SPEED: if (tem_valor) cmd_fan_speed(valor); break;
+        case CMD_HEATER:    if (tem_valor) cmd_heater(valor); break;
+        case CMD_STOP:      cmd_stop(); break;
+        default: break;
     }
 }
-
-
-// =====================================================
-// PROCESSAMENTO DO PACOTE JSON
-// =====================================================
 
 static void processar_pacote_json(const char *json_str)
 {
@@ -207,48 +147,29 @@ static void processar_pacote_json(const char *json_str)
 
     jsmn_init(&parser);
 
-    int r = jsmn_parse(&parser, json_str,
-                       strlen(json_str),
-                       tokens, MAX_TOKENS);
+    int r = jsmn_parse(&parser, json_str, strlen(json_str), tokens, MAX_TOKENS);
+    if (r < 1 || tokens[0].type != JSMN_OBJECT) return;
 
-    if (r < 1 || tokens[0].type != JSMN_OBJECT)
-        return;
-
-    jsmntok_t *cmd_tok =
-        json_get_field(json_str, tokens, r, "comando");
-
-    if (cmd_tok == NULL || cmd_tok->type != JSMN_STRING)
-        return;
+    jsmntok_t *cmd_tok = json_get_field(json_str, tokens, r, "comando");
+    if (cmd_tok == NULL || cmd_tok->type != JSMN_STRING) return;
 
     comando_t cmd = identificar_comando(json_str, cmd_tok);
-
     int valor = 0;
     bool tem_valor = false;
 
-    // Estes comandos exigem um campo "valor".
-    if (cmd == CMD_SETPOINT ||
-        cmd == CMD_FAN_SPEED ||
-        cmd == CMD_HEATER) {
-
-        jsmntok_t *val_tok =
-            json_get_field(json_str, tokens, r, "valor");
-
-        if (!json_get_int(json_str, val_tok, &valor))
-            return;
-
+    if (cmd == CMD_SETPOINT || cmd == CMD_FAN_SPEED || cmd == CMD_HEATER) {
+        jsmntok_t *val_tok = json_get_field(json_str, tokens, r, "valor");
+        if (!json_get_int(json_str, val_tok, &valor)) return;
         tem_valor = true;
     }
 
     executar_comando(cmd, valor, tem_valor);
 }
 
-
 // =====================================================
 // THREAD USB CDC
 // =====================================================
-
 static THD_WORKING_AREA(waUsbCdcThread, 512);
-
 static THD_FUNCTION(UsbCdcThread, arg)
 {
     (void)arg;
@@ -256,11 +177,8 @@ static THD_FUNCTION(UsbCdcThread, arg)
 
     while (true) {
         if (serusbcfg.usbp->state == USB_ACTIVE) {
-            
-            // Mudamos o timeout para TIME_IMMEDIATE para sugar tudo o que já chegou de uma vez só
             msg_t b = chnGetTimeout(&SDU1, TIME_IMMEDIATE);
 
-            // Se chegou um byte válido, processa ele e continua puxando os próximos em loop rápido
             while (b >= MSG_OK) {
                 char c = (char)b;
 
@@ -275,16 +193,10 @@ static THD_FUNCTION(UsbCdcThread, arg)
                     rx_buffer[rx_index++] = c;
                 }
                 else {
-                    // Pacote estourou o tamanho máximo: descarta
                     rx_index = 0;
                 }
-
-                // Puxa o próximo byte imediatamente sem dar sleep
                 b = chnGetTimeout(&SDU1, TIME_IMMEDIATE);
             }
-
-            // Quando o buffer de entrada esvaziar, dá uma pausa curtíssima (2ms) 
-            // para não travar a CPU e esperar novos pacotes da USB
             chThdSleepMilliseconds(2);
         }
         else {
@@ -294,17 +206,7 @@ static THD_FUNCTION(UsbCdcThread, arg)
     }
 }
 
-// =====================================================
-// INICIALIZAÇÃO
-// =====================================================
-
 void usb_cdc_handler_init(void)
 {
-    chThdCreateStatic(
-        waUsbCdcThread,
-        sizeof(waUsbCdcThread),
-        NORMALPRIO + 1,
-        UsbCdcThread,
-        NULL
-    );
+    chThdCreateStatic(waUsbCdcThread, sizeof(waUsbCdcThread), NORMALPRIO + 1, UsbCdcThread, NULL);
 }
