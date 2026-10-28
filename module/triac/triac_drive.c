@@ -2,67 +2,111 @@
 #include "hal.h"
 #include "module/triac/triac_drive.h"
 
-#define PIN_TRIAC           PAL_LINE(IOPORT1, 0U) 
-#define JANELA_TOTAL_MS     1000         // Janela macro de exatamente 1 segundo (1000ms)
+#include <stdbool.h>
+#include <stdint.h>
 
-static volatile int tempo_ligado_ms = 0; // Tempo em ms que o pino deve ficar em HIGH
+#define PIN_TRIAC       PAL_LINE(IOPORT1, 0U)
+#define JANELA_TOTAL_MS 1000U
+
+#define POTENCIA_MIN    0
+#define POTENCIA_MAX    100
 
 /*
- * Thread de Tempo Real do Driver do TRIAC
- * Aplica a divisão direta da janela de 1 segundo
+ * Circuito com PNP:
+ *
+ * GPIO HIGH -> transistor desligado -> LED do MOC3041 apagado
+ * GPIO LOW  -> transistor ligado    -> LED do MOC3041 aceso
  */
+
+static volatile int potencia_solicitada = 0;
+
 static THD_WORKING_AREA(waTriacDriverThread, 256);
-static THD_FUNCTION(TriacDriverThread, arg) {
-  (void)arg;
-  chRegSetThreadName("driver_moc3041_1s");
 
-  while (true) {
-    // Leitura segura do tempo ativo calculado para esta janela
+static inline void triac_acionar(void)
+{
+    palWriteLine(PIN_TRIAC, PAL_LOW);
+}
+
+static inline void triac_desacionar(void)
+{
+    palWriteLine(PIN_TRIAC, PAL_HIGH);
+}
+
+static THD_FUNCTION(TriacDriverThread, arg)
+{
+    (void)arg;
+
+    chRegSetThreadName("driver_moc3041");
+
+    /* Estado inicial seguro: LED do MOC3041 apagado. */
+    triac_desacionar();
+
+    while (true) {
+        int potencia;
+        systime_t inicio_janela;
+        uint32_t tempo_ligado;
+
+        inicio_janela = chVTGetSystemTimeX();
+
+        chSysLock();
+        potencia = potencia_solicitada;
+        chSysUnlock();
+
+        if (potencia < POTENCIA_MIN) {
+            potencia = POTENCIA_MIN;
+        } else if (potencia > POTENCIA_MAX) {
+            potencia = POTENCIA_MAX;
+        }
+
+        if (potencia == 0) {
+            /* 0%: saída inativa durante toda a janela. */
+            triac_desacionar();
+        } else if (potencia == 100) {
+            /* 100%: saída ativa durante toda a janela. */
+            triac_acionar();
+        } else {
+            tempo_ligado = (uint32_t)potencia * 10U;
+
+            /* Parte ativa: GPIO LOW. */
+            triac_acionar();
+            chThdSleepMilliseconds(tempo_ligado);
+
+            /* Parte inativa: GPIO HIGH. */
+            triac_desacionar();
+        }
+
+        /* Mantém a janela total próxima de 1000 ms. */
+        chThdSleepUntil(
+            inicio_janela + TIME_MS2I(JANELA_TOTAL_MS)
+        );
+    }
+}
+
+void triac_driver_init(void)
+{
+    palSetLineMode(PIN_TRIAC, PAL_MODE_OUTPUT_PUSHPULL);
+
+    /* Inicializa desligado antes de iniciar a thread. */
+    triac_desacionar();
+
+    chThdCreateStatic(
+        waTriacDriverThread,
+        sizeof(waTriacDriverThread),
+        NORMALPRIO,
+        TriacDriverThread,
+        NULL
+    );
+}
+
+void triac_set_power(int power)
+{
+    if (power < POTENCIA_MIN) {
+        power = POTENCIA_MIN;
+    } else if (power > POTENCIA_MAX) {
+        power = POTENCIA_MAX;
+    }
+
     chSysLock();
-    int t_on = tempo_ligado_ms;
+    potencia_solicitada = power;
     chSysUnlock();
-    int t_off = JANELA_TOTAL_MS - t_on;
-
-    // Caso especial: 0% de potência
-    if (t_on <= 0) {
-      palWriteLine(PIN_TRIAC, PAL_LOW);
-      chThdSleepMilliseconds(JANELA_TOTAL_MS);
-      continue;
-    }
-
-    // Caso especial: 100% de potência
-    if (t_on >= JANELA_TOTAL_MS) {
-      palWriteLine(PIN_TRIAC, PAL_HIGH);
-      chThdSleepMilliseconds(JANELA_TOTAL_MS);
-      continue;
-    }
-
-    // Parte ativa da janela (Liga e espera)
-    palWriteLine(PIN_TRIAC, PAL_HIGH); // MOC3041 se vira para achar o ZC e conduzir
-    chThdSleepMilliseconds(t_on);
-
-    // Parte inativa da janela (Desliga e espera o resto do 1 segundo)
-    palWriteLine(PIN_TRIAC, PAL_LOW);  // TRIAC cortará no próximo ZC
-    chThdSleepMilliseconds(t_off);
-  }
-}
-
-void triac_driver_init(void) {
-  palSetLineMode(PIN_TRIAC, PAL_MODE_OUTPUT_PUSHPULL);
-  palWriteLine(PIN_TRIAC, PAL_LOW);
-
-  // Inicia a thread com prioridade comum, já que os tempos são na escala de milissegundos
-  chThdCreateStatic(waTriacDriverThread, sizeof(waTriacDriverThread), 
-                    NORMALPRIO, TriacDriverThread, NULL);
-}
-
-void triac_set_power(int power) {
-  // Limita a entrada entre 0% e 100%
-  if (power > 100) power = 100;
-  if (power < 0) power = 0;
-
-  // Regra de três direta: cada 1% equivale a 10ms dentro da janela de 1000ms
-  chSysLock();
-  tempo_ligado_ms = power * 10; 
-  chSysUnlock();
 }

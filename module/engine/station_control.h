@@ -11,6 +11,9 @@ typedef enum {
 } station_state_t;
 
 /* Processamento executado pelo Core 1 */
-void station_control_process(const core0_state_t *hardware, core1_commands_t *commands);
+void station_control_process(
+    const core0_state_t *hardware,
+    core1_commands_t *commands
+);
 
 #endif

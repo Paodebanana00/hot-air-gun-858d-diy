@@ -2,18 +2,19 @@
 #include "hal.h"
 
 #include "module/engine/engine_shared.h"
-#include "module/engine/station_control.h" // Inclui o novo controlador separado
+#include "module/engine/station_control.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 /* ============================================================
- * THREAD 1: ENGINE (PROCESSA A MÁQUINA DE ESTADOS E PID)
+ * THREAD 1: CONTROLE DA MÁQUINA DE ESTADOS
  * ============================================================ */
 
-static THD_WORKING_AREA(waEngineThread, 512);
+static THD_WORKING_AREA(waEngineThread, 768);
 
-static THD_FUNCTION(EngineThread, arg) {
+static THD_FUNCTION(EngineThread, arg)
+{
     (void)arg;
 
     chRegSetThreadName("engine_logic");
@@ -22,34 +23,43 @@ static THD_FUNCTION(EngineThread, arg) {
     core1_commands_t commands = {0};
 
     while (true) {
-        /* Recebe o estado físico publicado pelo Core 0 (Sensores, Potenciômetros e Botões). */
-        core0_read_state(&hardware);
-
-        /* 
-         * Executa a lógica modular da estação (PID, Estados e Proteções).
-         * Altera as variáveis commands.triac_power_command e commands.fan_pwm_command internamente.
+        /*
+         * Só processa a máquina de estados se conseguiu
+         * obter o snapshot publicado pelo Core 0.
          */
-        station_control_process(&hardware, &commands);
+        if (core0_read_state(&hardware)) {
 
-        /* Atualiza os dados comuns de controle */
-        commands.target_temperature_centi = hardware.temperature_setpoint * 100;
-        commands.sequence++;
+            /*
+             * Toda a lógica de estados, PID e proteção
+             * continua centralizada no controlador.
+             */
+            station_control_process(&hardware, &commands);
 
-        /* Publica os comandos calculados para o Core 0 aplicar no hardware físico. */
-        core1_publish_commands(&commands);
+            commands.target_temperature_centi =
+                hardware.temperature_setpoint * 100;
+
+            commands.sequence++;
+
+            /*
+             * Publica os comandos para aplicação no Core 0.
+             */
+            core1_publish_commands(&commands);
+        }
 
         chThdSleepMilliseconds(20);
     }
 }
 
-
 /* ============================================================
  * THREAD 2: DIAGNÓSTICO
+ *
+ * Esta thread nunca escreve diretamente na USB.
  * ============================================================ */
 
 static THD_WORKING_AREA(waDiagnosticThread, 512);
 
-static THD_FUNCTION(DiagnosticThread, arg) {
+static THD_FUNCTION(DiagnosticThread, arg)
+{
     (void)arg;
 
     chRegSetThreadName("core1_diagnostic");
@@ -58,46 +68,55 @@ static THD_FUNCTION(DiagnosticThread, arg) {
     core1_diagnostic_t diagnostic = {0};
 
     while (true) {
-        /* Lê o estado físico publicado pelo Core 0. */
-        core0_read_state(&hardware);
+        if (core0_read_state(&hardware)) {
+            diagnostic.sequence = hardware.sequence;
+            diagnostic.temperature_centi =
+                hardware.temperature_centi;
+            diagnostic.temperature_valid =
+                hardware.temperature_valid;
+            diagnostic.thermocouple_raw =
+                hardware.thermocouple_raw;
+            diagnostic.thermocouple_status =
+                hardware.thermocouple_status;
+            diagnostic.fan_pot_raw =
+                hardware.fan_pot_raw;
+            diagnostic.temperature_setpoint =
+                hardware.temperature_setpoint;
 
-        /*
-         * Copia o snapshot recebido para a estrutura de diagnóstico.
-         * Não imprime pela USB neste núcleo.
-         */
-        diagnostic.sequence = hardware.sequence;
-        diagnostic.temperature_centi = hardware.temperature_centi;
-        diagnostic.temperature_valid = hardware.temperature_valid;
-        diagnostic.thermocouple_raw = hardware.thermocouple_raw;
-        diagnostic.thermocouple_status = hardware.thermocouple_status;
-        diagnostic.fan_pot_raw = hardware.fan_pot_raw;
-        diagnostic.temperature_setpoint = hardware.temperature_setpoint;
-        
-        // Mantém atualizados os estados de entrada que você lê no terminal
-        diagnostic.button_state_1 = hardware.button_state_1;
-        diagnostic.button_state_2 = hardware.button_state_2;
-        diagnostic.hardware_faults = hardware.hardware_faults;
+            diagnostic.button_state_1 =
+                hardware.button_state_1;
+            diagnostic.button_state_2 =
+                hardware.button_state_2;
+            diagnostic.hardware_faults =
+                hardware.hardware_faults;
 
-        /* Publica os dados que o Core 0 deverá capturar e imprimir via JSON pela USB. */
-        core1_publish_diagnostic(&diagnostic);
+            core1_publish_diagnostic(&diagnostic);
+        }
 
-        chThdSleepMilliseconds(500);
+        chThdSleepMilliseconds(200);
     }
 }
-
 
 /* ============================================================
  * ENTRADA DO CORE 1
  * ============================================================ */
 
-void c1_main(void) {
+void c1_main(void)
+{
+    /*
+     * Mantém a sequência de inicialização multicore
+     * utilizada pelo projeto original.
+     *
+     * A validade de chInstanceObjectInit() e chSysUnlock()
+     * precisa ser confirmada para a versão/configuração
+     * multicore específica do ChibiOS utilizada.
+     */
     chSysWaitSystemState(ch_sys_running);
 
     chInstanceObjectInit(&ch1, &ch_core1_cfg);
 
     chSysUnlock();
 
-    /* Cria a tarefa lógica principal com maior prioridade de agendamento */
     chThdCreateStatic(
         waEngineThread,
         sizeof(waEngineThread),
@@ -106,7 +125,6 @@ void c1_main(void) {
         NULL
     );
 
-    /* Cria a tarefa de diagnóstico e telemetria */
     chThdCreateStatic(
         waDiagnosticThread,
         sizeof(waDiagnosticThread),

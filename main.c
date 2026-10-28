@@ -1,3 +1,4 @@
+
 #include "ch.h"
 #include "hal.h"
 #include "chprintf.h"
@@ -19,6 +20,81 @@
 core0_state_t hw_state = {0};
 core1_commands_t commands = {0};
 
+/* Saídas aplicadas pelo Core 0.
+ * A thread de telemetria apenas lê estes valores.
+ */
+static volatile uint32_t applied_triac_power = 0;
+static volatile uint32_t applied_fan_pwm = 4095;
+
+/* ============================================================
+ * THREAD DE TELEMETRIA USB
+ *
+ * Nenhuma escrita USB ocorre no laço de controle.
+ * Se a USB bloquear, somente esta thread será afetada.
+ * ============================================================ */
+
+static THD_WORKING_AREA(waTelemetryThread, 768);
+
+static THD_FUNCTION(TelemetryThread, arg)
+{
+    (void)arg;
+
+    chRegSetThreadName("usb_telemetry");
+
+    while (true) {
+        if (serusbcfg.usbp->state != USB_ACTIVE ||
+            SDU1.config == NULL) {
+            chThdSleepMilliseconds(200);
+            continue;
+        }
+
+        core1_diagnostic_t d;
+
+        if (core0_read_diagnostic(&d)) {
+            uint32_t triac = applied_triac_power;
+            uint32_t fan = applied_fan_pwm;
+
+            chprintf((BaseSequentialStream *)&SDU1,
+                     "{"
+                     "\"seq\":%u,"
+                     "\"temp_ok\":%u,"
+                     "\"temp\":%d.%02d,"
+                     "\"raw_tc\":%u,"
+                     "\"status_tc\":%u,"
+                     "\"pot_fan\":%u,"
+                     "\"setpoint\":%d,"
+                     "\"btn1\":%u,"
+                     "\"btn2\":%u,"
+                     "\"faults\":%u,"
+                     "\"triac_out\":%u,"
+                     "\"fan_out\":%u"
+                     "}\r\n",
+                     (unsigned int)d.sequence,
+                     (unsigned int)d.temperature_valid,
+                     (int)(d.temperature_centi / 100),
+                     (int)(d.temperature_centi < 0
+                         ? -(d.temperature_centi % 100)
+                         : d.temperature_centi % 100),
+                     (unsigned int)d.thermocouple_raw,
+                     (unsigned int)d.thermocouple_status,
+                     (unsigned int)d.fan_pot_raw,
+                     (int)d.temperature_setpoint,
+                     (unsigned int)d.button_state_1,
+                     (unsigned int)d.button_state_2,
+                     (unsigned int)d.hardware_faults,
+                     (unsigned int)triac,
+                     (unsigned int)fan);
+        }
+
+        /* Limita a frequência da telemetria. */
+        chThdSleepMilliseconds(200);
+    }
+}
+
+/* ============================================================
+ * MAIN DO CORE 0
+ * ============================================================ */
+
 int main(void)
 {
     halInit();
@@ -26,22 +102,32 @@ int main(void)
 
     engine_shared_init();
 
+    /* Inicializa USB e receptor de comandos. */
     usb_cdc_start();
     usb_cdc_handler_init();
 
+    /* Inicializa sensores e saídas físicas. */
     thermocouple_start();
     output_pwm_init();
     triac_driver_init();
 
-    /* Inicializa os botões no Core 0. */
     botoes_init();
 
-    /*
-     * Estado seguro inicial.
-     * Não habilita o aquecimento até receber comandos válidos.
-     */
+    /* Estado seguro inicial. */
     triac_set_power(0);
     output_pwm_set_duty(4095);
+
+    applied_triac_power = 0;
+    applied_fan_pwm = 4095;
+
+    /* Telemetria isolada do controle físico. */
+    chThdCreateStatic(
+        waTelemetryThread,
+        sizeof(waTelemetryThread),
+        NORMALPRIO - 1,
+        TelemetryThread,
+        NULL
+    );
 
     while (true) {
         float temperature = 0.0f;
@@ -49,7 +135,7 @@ int main(void)
         bool valid =
             thermocouple_get_temperature(&temperature);
 
-        /* 1. Atualiza os dados físicos. */
+        /* 1. Atualiza as entradas físicas. */
         hw_state.sequence++;
 
         hw_state.temperature_valid = valid;
@@ -68,10 +154,8 @@ int main(void)
         hw_state.fan_pot_raw =
             (uint32_t)raw_fan();
 
-        hw_state.temperature_setpoint =
-            poten();
+        hw_state.temperature_setpoint = poten();
 
-        /* Atualiza os estados dos botões. */
         processar_botoes();
 
         hw_state.button_state_1 =
@@ -80,13 +164,26 @@ int main(void)
         hw_state.button_state_2 =
             estado_sistema_2 ? 1U : 0U;
 
-        /* 2. Publica os dados físicos para o Core 1. */
+        /* 2. Publica o snapshot físico para o Core 1. */
         core0_publish_state(&hw_state);
 
+        /*
+         * 3. Obtém os comandos do controlador.
+         *
+         * Não modifica as saídas quando não há uma
+         * nova publicação válida de comandos.
+         */
         if (core1_read_commands(&commands)) {
-            uint32_t power = commands.triac_power_command;
-            uint32_t fan_pwm = commands.fan_pwm_command;
+            uint32_t power =
+                commands.triac_power_command;
 
+            uint32_t fan_pwm =
+                commands.fan_pwm_command;
+
+            /*
+             * Falha de sensor ou de hardware:
+             * desliga o aquecimento e solicita ventilação.
+             */
             if (!valid || hw_state.hardware_faults != 0U) {
                 power = 0U;
                 fan_pwm = 4095U;
@@ -96,6 +193,7 @@ int main(void)
                 power = 0U;
             }
 
+            /* Validação dos limites físicos. */
             if (power > 100U) {
                 power = 0U;
             }
@@ -104,62 +202,24 @@ int main(void)
                 fan_pwm = 4095U;
             }
 
+            /*
+             * Aplica primeiro a política de segurança e
+             * depois atualiza os valores de diagnóstico.
+             */
             triac_set_power((uint8_t)power);
             output_pwm_set_duty((uint16_t)fan_pwm);
+
+            applied_triac_power = power;
+            applied_fan_pwm = fan_pwm;
 
             hw_state.triac_power_applied = power;
             hw_state.fan_pwm_applied = fan_pwm;
         }
 
-        /* 4. Imprime o diagnóstico recebido do Core 1 em formato JSON */
-        if ((SDU1.config != NULL) &&
-            (serusbcfg.usbp->state == USB_ACTIVE)) {
-
-            core1_diagnostic_t d;
-
-            if (core0_read_diagnostic(&d)) {
-                // Deduz um ID de estado básico apenas pelos botões locais para não travar a compilação
-                int estado_estimado = 0;
-                if (hw_state.button_state_1 == 1U) {
-                    estado_estimado = (hw_state.button_state_2 == 0U) ? 2 : 1; 
-                }
-                if (hw_state.fan_pwm_applied == 4095U && hw_state.triac_power_applied == 0U && hw_state.temperature_centi > 6000) {
-                    estado_estimado = 3; // Resfriamento ativo
-                }
-
-                chprintf((BaseSequentialStream *)&SDU1,
-                         "{"
-                         "\"seq\":%u,"
-                         "\"temp_ok\":%u,"
-                         "\"temp\":%d.%02d,"
-                         "\"raw_tc\":%u,"
-                         "\"status_tc\":%u,"
-                         "\"pot_fan\":%u,"
-                         "\"setpoint\":%d,"
-                         "\"btn1\":%u,"
-                         "\"btn2\":%u,"
-                         "\"faults\":%u,"
-                         "\"triac_out\":%u,"
-                         "\"fan_out\":%u,"
-                         "\"state\":%d"
-                         "}\r\n",
-                         (unsigned int)d.sequence,
-                         (unsigned int)d.temperature_valid,
-                         (int)(d.temperature_centi / 100),
-                         (int)(d.temperature_centi < 0 ? -(d.temperature_centi % 100) : d.temperature_centi % 100),
-                         (unsigned int)d.thermocouple_raw,
-                         (unsigned int)d.thermocouple_status,
-                         (unsigned int)d.fan_pot_raw,
-                         (int)d.temperature_setpoint,
-                         (unsigned int)d.button_state_1,
-                         (unsigned int)d.button_state_2,
-                         (unsigned int)d.hardware_faults,
-                         (unsigned int)hw_state.triac_power_applied,
-                         (unsigned int)hw_state.fan_pwm_applied,
-                         estado_estimado); // <-- Modificado para usar a estimativa local e compilar direto
-            }
-        }
-
+        /*
+         * 4. Nenhum chprintf, espera USB ou processamento
+         * JSON é executado neste laço.
+         */
         chThdSleepMilliseconds(50);
     }
 }

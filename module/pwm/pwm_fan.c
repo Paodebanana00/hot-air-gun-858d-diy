@@ -41,12 +41,15 @@ void output_pwm_init(void) {
  * @brief Sets the duty cycle output value linearly on Pin 16.
  * @param duty Raw 12-bit target value coming directly from the potentiometer ADC.
  */
-void output_pwm_set_duty(uint16_t duty) {
-    // Hardware boundary clamping for 12-bit limit
+void output_pwm_set_duty(uint16_t duty)
+{
     if (duty > OUTPUT_PWM_PERIOD) {
         duty = OUTPUT_PWM_PERIOD;
     }
 
-    // Direct hardware register update on Channel 0 (Pin 16) without mathematical scaling
-    pwmEnableChannel(OUTPUT_PWM_DRIVER, OUTPUT_PWM_CHANNEL, (pwmcnt_t)duty);
+    pwmEnableChannel(
+        OUTPUT_PWM_DRIVER,
+        OUTPUT_PWM_CHANNEL,
+        (pwmcnt_t)duty
+    );
 }
