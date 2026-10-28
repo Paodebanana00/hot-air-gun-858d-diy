@@ -1,137 +1,254 @@
+
 #include "station_control.h"
 #include "module/pid/pid.h"
-#include <stdlib.h> // Necessário para a função abs()
+
+#include <stdlib.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#define FAN_PWM_OFF          0U
+#define FAN_PWM_MAX          4095U
+#define TEMP_RESFRIADO_CENTI 6000
+#define SETPOINT_MIN_C       0
+#define SETPOINT_MAX_C       100
 
 static station_state_t estado_atual = ESTADO_DESLIGADO;
 static pid_controller_t termostato;
 static bool pid_inicializado = false;
+static bool desligamento_solicitado = false;
+static bool parada_remota_em_andamento = false;
+static bool desligamento_remoto_concluido = false;
 
-// Declaração das variáveis globais atualizadas pela Thread USB CDC
 extern volatile bool remote_control_active;
 extern volatile int32_t remote_setpoint;
 extern volatile uint32_t remote_fan_speed;
+extern volatile bool remote_stop_requested;
 
-// Histórico para detectar se o usuário girou os botões físicos na bancada
 static int32_t last_physical_setpoint = 0;
 static uint32_t last_physical_fan = 0;
 static bool historico_inicializado = false;
 
-void station_control_process(const core0_state_t *hardware, core1_commands_t *commands) {
-    // Inicializa o PID uma única vez
+static int32_t limitar_setpoint(int32_t valor)
+{
+    if (valor < SETPOINT_MIN_C) {
+        return SETPOINT_MIN_C;
+    }
+
+    if (valor > SETPOINT_MAX_C) {
+        return SETPOINT_MAX_C;
+    }
+
+    return valor;
+}
+
+void station_control_process(const core0_state_t *hardware,
+                             core1_commands_t *commands)
+{
+    if (hardware == NULL || commands == NULL) {
+        return;
+    }
+
     if (!pid_inicializado) {
         pid_init(&termostato, 2.5f, 0.08f, 0.4f, 0.0f, 100.0f);
         pid_inicializado = true;
     }
 
-    // Inicializa o histórico físico na primeira execução para evitar saltos falsos
     if (!historico_inicializado) {
         last_physical_setpoint = hardware->temperature_setpoint;
         last_physical_fan = hardware->fan_pot_raw;
         historico_inicializado = true;
     }
 
-    // 1. FILTRO DE PRIORIDADE: Verifica se houve ação manual nos potenciômetros da bancada
-    if (remote_control_active) {
-        int32_t diff_setpoint = hardware->temperature_setpoint - last_physical_setpoint;
-        int32_t diff_fan = (int32_t)hardware->fan_pot_raw - (int32_t)last_physical_fan;
+    // 1. Recebe a solicitação de parada remota.
+    if (remote_stop_requested) {
+        remote_stop_requested = false;
+        remote_control_active = false;
+        remote_setpoint = 0;
+        remote_fan_speed = FAN_PWM_MAX;
 
-        // Se o operador mover os botões além da margem de ruído, cancela o controle remoto
+        parada_remota_em_andamento = true;
+        desligamento_remoto_concluido = false;
+        desligamento_solicitado = true;
+        estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
+    }
+
+    // 2. Parada remota: TRIAC desligado e ventilação determinada
+    // exclusivamente pela temperatura.
+    if (parada_remota_em_andamento) {
+        commands->triac_power_command = 0U;
+
+        if (!hardware->temperature_valid ||
+            hardware->hardware_faults != 0U) {
+            commands->fan_pwm_command = FAN_PWM_MAX;
+            commands->shutdown_requested = false;
+            return;
+        }
+
+        if (hardware->temperature_centi > TEMP_RESFRIADO_CENTI) {
+            commands->fan_pwm_command = FAN_PWM_MAX;
+            commands->shutdown_requested = false;
+            return;
+        }
+
+        // Temperatura <= 60 °C: desliga completamente.
+        commands->fan_pwm_command = FAN_PWM_OFF;
+        commands->shutdown_requested = true;
+
+        parada_remota_em_andamento = false;
+        desligamento_remoto_concluido = true;
+        desligamento_solicitado = false;
+        estado_atual = ESTADO_DESLIGADO;
+        return;
+    }
+
+    // 3. Depois da parada remota, não religa sozinho.
+    if (desligamento_remoto_concluido) {
+        commands->triac_power_command = 0U;
+        commands->fan_pwm_command = FAN_PWM_OFF;
+        commands->shutdown_requested = true;
+
+        if (hardware->button_state_1 == 0U) {
+            desligamento_remoto_concluido = false;
+        }
+
+        return;
+    }
+
+    // 4. Detecta alterações nos controles físicos.
+    if (remote_control_active) {
+        int32_t diff_setpoint =
+            hardware->temperature_setpoint - last_physical_setpoint;
+
+        int32_t diff_fan =
+            (int32_t)hardware->fan_pot_raw -
+            (int32_t)last_physical_fan;
+
         if (abs(diff_setpoint) > 3 || abs(diff_fan) > 100) {
             remote_control_active = false;
         }
     }
 
-    // Atualiza o histórico para a próxima leitura de 20ms
     last_physical_setpoint = hardware->temperature_setpoint;
     last_physical_fan = hardware->fan_pot_raw;
 
-    // 2. DEFINE OS ALVOS ATUAIS BASEADO EM QUEM TEM A PRIORIDADE (Remoto ou Físico)
-    int32_t setpoint_final = remote_control_active ? remote_setpoint : hardware->temperature_setpoint;
-    uint32_t fan_final = remote_control_active ? remote_fan_speed : hardware->fan_pot_raw;
+    int32_t setpoint_final = remote_control_active
+        ? limitar_setpoint(remote_setpoint)
+        : limitar_setpoint(hardware->temperature_setpoint);
 
-    // Configura o alvo no controlador PID baseado na decisão de prioridade
-    float t_desejada = (float)setpoint_final;
+    uint32_t fan_final = remote_control_active
+        ? remote_fan_speed
+        : hardware->fan_pot_raw;
+
+    if (fan_final > FAN_PWM_MAX) {
+        fan_final = FAN_PWM_MAX;
+    }
+
     float t_atual = (float)hardware->temperature_centi / 100.0f;
-    pid_set_target(&termostato, t_desejada);
+    pid_set_target(&termostato, (float)setpoint_final);
 
-    // MÁQUINA DE ESTADOS DO PROJETO
+    // 5. Máquina de estados.
     switch (estado_atual) {
-
         case ESTADO_DESLIGADO:
-            commands->triac_power_command = 0;
-            commands->fan_pwm_command = 0;
+            commands->triac_power_command = 0U;
+            commands->fan_pwm_command = FAN_PWM_OFF;
             commands->shutdown_requested = true;
+            desligamento_solicitado = false;
 
-            // Botão 1 vira chave -> vai de 0 para 1: Liga a estação
             if (hardware->button_state_1 == 1U) {
                 estado_atual = ESTADO_LIGADO_NA_BASE;
             }
             break;
 
         case ESTADO_LIGADO_NA_BASE:
-            commands->triac_power_command = 0;
-            commands->fan_pwm_command = 1000; // Fluxo bem baixinho só por segurança
+            commands->triac_power_command = 0U;
+            commands->fan_pwm_command = FAN_PWM_OFF;
             commands->shutdown_requested = false;
 
-            // Botão 2 sai da base -> vai de 1 para 0: Começa a esquentar
             if (hardware->button_state_2 == 0U) {
                 estado_atual = ESTADO_EM_OPERACAO;
             }
 
-            // Se o usuário desligar a chave principal
             if (hardware->button_state_1 == 0U) {
-                estado_atual = ESTADO_DESLIGADO;
+                desligamento_solicitado = true;
+                estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
             }
             break;
 
-        case ESTADO_EM_OPERACAO: {
+        case ESTADO_EM_OPERACAO:
             commands->shutdown_requested = false;
+            commands->fan_pwm_command = fan_final;
 
-            // Aplica a velocidade decidida (seja remota ou do potenciômetro)
-            uint32_t cooler_pwm = fan_final;
+            // Nunca aquece com sensor inválido ou falha de hardware.
+            if (!hardware->temperature_valid ||
+                hardware->hardware_faults != 0U) {
+                commands->triac_power_command = 0U;
+            } else {
+                float output = pid_compute(&termostato, t_atual);
 
-            // PROTEÇÃO: Força um limite mínimo para o cooler não parar enquanto esquenta
-            if (cooler_pwm < 1200U) {
-                cooler_pwm = 1200U;
+                if (output < 0.0f) {
+                    output = 0.0f;
+                }
+
+                if (output > 100.0f) {
+                    output = 100.0f;
+                }
+
+                commands->triac_power_command = (uint32_t)output;
             }
 
-            commands->fan_pwm_command = cooler_pwm;
-
-            // Calcula o PID dinâmico do TRIAC para buscar o setpoint_final
-            commands->triac_power_command = (uint32_t)pid_compute(&termostato, t_atual);
-
-            // Botão 2 volta pra base -> vai para 1: Aciona resfriamento imediato
             if (hardware->button_state_2 == 1U) {
+                desligamento_solicitado = false;
                 estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
             }
 
-            // Se desligar a chave geral no meio do uso, vai para o resfriamento seguro!
             if (hardware->button_state_1 == 0U) {
+                desligamento_solicitado = true;
                 estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
             }
             break;
-        }
 
         case ESTADO_RESFRIAMENTO_SEGURO:
-            commands->triac_power_command = 0; // CALOR CORTADO TOTALMENTE
-            commands->fan_pwm_command = 4095;  // VENTO NO MÁXIMO PARA NÃO DERRETER
+            commands->triac_power_command = 0U;
             commands->shutdown_requested = false;
 
-            // PROTEÇÃO: Só sai do resfriamento quando baixar de 60.00°C
-            if (hardware->temperature_centi < 6000) {
-                // Decide se desliga tudo ou volta pro standby da base baseado na chave principal
-                if (hardware->button_state_1 == 1U) {
-                    estado_atual = ESTADO_LIGADO_NA_BASE;
-                } else {
-                    estado_atual = ESTADO_DESLIGADO;
-                }
+            if (!hardware->temperature_valid ||
+                hardware->hardware_faults != 0U) {
+                commands->fan_pwm_command = FAN_PWM_MAX;
+                break;
             }
+
+            if (hardware->temperature_centi > TEMP_RESFRIADO_CENTI) {
+                commands->fan_pwm_command = FAN_PWM_MAX;
+                break;
+            }
+
+            // Chegou a 60 °C ou menos: ventoinha OFF.
+            commands->fan_pwm_command = FAN_PWM_OFF;
+
+            if (desligamento_solicitado ||
+                hardware->button_state_1 == 0U) {
+                estado_atual = ESTADO_DESLIGADO;
+                commands->shutdown_requested = true;
+            } else {
+                estado_atual = ESTADO_LIGADO_NA_BASE;
+                commands->shutdown_requested = false;
+            }
+            break;
+
+        default:
+            estado_atual = ESTADO_DESLIGADO;
+            commands->triac_power_command = 0U;
+            commands->fan_pwm_command = FAN_PWM_OFF;
+            commands->shutdown_requested = true;
             break;
     }
 
-    // PROTEÇÃO 1 (Global): Falha de leitura desliga o aquecimento imediatamente acima de qualquer modo
-    if (!hardware->temperature_valid || hardware->hardware_faults != 0U) {
-        commands->triac_power_command = 0;
-        commands->fan_pwm_command = 4095; // Sopra tudo no máximo para proteger o bocal
+    // 6. Proteção global: falha de sensor ou hardware.
+    // Esta proteção prevalece sobre os comandos normais.
+    if (!hardware->temperature_valid ||
+        hardware->hardware_faults != 0U) {
+        commands->triac_power_command = 0U;
+        commands->fan_pwm_command = FAN_PWM_MAX;
+        commands->shutdown_requested = false;
     }
 }

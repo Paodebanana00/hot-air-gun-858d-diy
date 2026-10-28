@@ -27,6 +27,7 @@ static bool rx_discarding = false;
 volatile bool remote_control_active = false;
 volatile int32_t remote_setpoint = 0;
 volatile uint32_t remote_fan_speed = 0;
+volatile bool remote_stop_requested = false;
 
 typedef enum {
     CMD_DESCONHECIDO = 0,
@@ -185,8 +186,9 @@ static void cmd_heater(int valor)
 static void cmd_stop(void)
 {
     remote_setpoint = 0;
-    remote_fan_speed = 0;
+    remote_fan_speed = 4095;
     remote_control_active = false;
+    remote_stop_requested = true;
 }
 
 static void executar_comando(comando_t cmd, int valor, bool tem_valor)

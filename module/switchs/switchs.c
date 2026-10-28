@@ -1,20 +1,19 @@
 #include "switchs.h"
 
-
 // Variáveis globais em bool (true/false) para controle do seu sistema
 volatile bool estado_sistema_1 = false;
 volatile bool estado_sistema_2 = false;
 
 // Histórico para o Debounce
 static uint8_t ultimo_estado_btn1 = PAL_HIGH;
-static uint8_t ultimo_estado_btn2 = PAL_LOW;
+static uint8_t ultimo_estado_btn2 = PAL_HIGH;
 
 void botoes_init(void) {
     // Botão 1 precisa de Pull-up para ficar em 1 (HIGH) enquanto estiver solto do GND
     palSetPadMode(PORTA_RP2040, GP_GND_TRUE, PAL_MODE_INPUT_PULLUP);
-    
-    // Botão 2 usa Pull-down para manter a estabilidade em 0 (LOW) quando for solto do GND
-    palSetPadMode(PORTA_RP2040, GP_SOL_TRUE, PAL_MODE_INPUT_PULLDOWN);
+
+    // Botão 2 usa Pull-up para manter em 1 (HIGH) quando estiver solto e ir para 0 (LOW) ao conectar ao GND
+    palSetPadMode(PORTA_RP2040, GP_SOL_TRUE, PAL_MODE_INPUT_PULLUP);
 }
 
 void processar_botoes(void) {
@@ -28,7 +27,7 @@ void processar_botoes(void) {
         estado_sistema_1 = false;
     }
 
-    if (atual_btn2 == PAL_HIGH) {
+    if (atual_btn2 == PAL_LOW) {
         estado_sistema_2 = true;
     } else {
         estado_sistema_2 = false;
