@@ -220,6 +220,6 @@ int main(void)
          * 4. Nenhum chprintf, espera USB ou processamento
          * JSON é executado neste laço.
          */
-        chThdSleepMilliseconds(50);
+        chThdSleepMilliseconds(10);
     }
 }

@@ -1,3 +1,4 @@
+
 #include "station_control.h"
 #include "module/pid/pid.h"
 
@@ -9,27 +10,35 @@
  * CONFIGURACAO
  * ========================================================= */
 
-#define FAN_PWM_OFF                 0U
-#define FAN_PWM_MAX                 4095U
-#define FAN_PWM_MIN_AQUECIMENTO     1200U
-#define TEMP_RESFRIADO_CENTI        6000
+#define FAN_PWM_OFF                     0U
+#define FAN_PWM_MAX                     4095U
+#define FAN_PWM_MIN_AQUECIMENTO         1200U
+#define TEMP_RESFRIADO_CENTI            6000
 
-#define SETPOINT_MIN_C              0
-#define SETPOINT_MAX_C              100
+#define SETPOINT_MIN_C                  0
+#define SETPOINT_MAX_C                  100
 
-#define PID_KP                      2.5f
-#define PID_KI                      0.08f
-#define PID_KD                      0.4f
+#define PID_KP                          2.5f
+#define PID_KI                          0.08f
+#define PID_KD                          0.4f
 
 /*
- * Convencao dos sinais recebidos do Core 0:
+ * Deve corresponder ao intervalo real entre chamadas
+ * de station_control_process().
+ *
+ * 0.1f = 100 ms.
+ */
+#define PID_INTERVAL_SECONDS            0.1f
+
+/*
+ * Convencao:
  *
  * button_state_1:
- *   1 = permissao/interruptor ligado
+ *   1 = interruptor ligado
  *   0 = desligado
  *
  * button_state_2:
- *   1 = soprador detectado na base
+ *   1 = soprador na base
  *   0 = soprador fora da base
  */
 
@@ -97,18 +106,26 @@ static bool temperatura_resfriada(const core0_state_t *hardware)
            hardware->temperature_centi <= TEMP_RESFRIADO_CENTI;
 }
 
+/*
+ * Inicializa o PID na primeira chamada.
+ * Nas chamadas seguintes, reinicia o estado interno.
+ */
 static void zerar_pid(void)
 {
-    pid_init(
-        &termostato,
-        PID_KP,
-        PID_KI,
-        PID_KD,
-        0.0f,
-        100.0f
-    );
+    if (!pid_inicializado) {
+        pid_init(
+            &termostato,
+            PID_KP,
+            PID_KI,
+            PID_KD,
+            0.0f,
+            100.0f
+        );
 
-    pid_inicializado = true;
+        pid_inicializado = true;
+    } else {
+        pid_reset(&termostato);
+    }
 }
 
 static void definir_saidas_seguras(core1_commands_t *commands)
@@ -136,8 +153,9 @@ void station_control_process(
     }
 
     /*
-     * Estado seguro por padrao:
-     * aquecimento desligado.
+     * Estado seguro por padrao.
+     * O aquecimento so sera solicitado explicitamente
+     * no estado ESTADO_EM_OPERACAO.
      */
     commands->triac_power_command = 0U;
     commands->fan_pwm_command = FAN_PWM_OFF;
@@ -157,8 +175,6 @@ void station_control_process(
 
     /* -----------------------------------------------------
      * 1. PARADA REMOTA
-     *
-     * Tem prioridade sobre todos os estados.
      * ----------------------------------------------------- */
 
     if (remote_stop_requested) {
@@ -182,7 +198,7 @@ void station_control_process(
         commands->shutdown_requested = false;
 
         /*
-         * Sem leitura confiavel, nunca presumir
+         * Sem leitura confiavel, nao presumir
          * que o soprador ja esfriou.
          */
         if (!frio_o_suficiente) {
@@ -224,9 +240,7 @@ void station_control_process(
     }
 
     /* -----------------------------------------------------
-     * 2. FALHA DE SENSOR/HARDWARE
-     *
-     * A resistencia desliga e o ventilador fica no maximo.
+     * 2. FALHA DE SENSOR OU HARDWARE
      * ----------------------------------------------------- */
 
     if (!sensor_ok) {
@@ -236,7 +250,7 @@ void station_control_process(
     }
 
     /* -----------------------------------------------------
-     * 3. SELECAO DOS COMANDOS LOCAL/REMOTO
+     * 3. SELECAO DOS COMANDOS LOCAL OU REMOTO
      * ----------------------------------------------------- */
 
     const int32_t setpoint_final = remote_control_active
@@ -254,16 +268,11 @@ void station_control_process(
 
     /* -----------------------------------------------------
      * 4. TRANSICOES DA MAQUINA DE ESTADOS
-     *
-     * Reed switch e uma deteccao de nivel:
-     *
-     * Na base (1): nao aquecer.
-     * Fora da base (0): pode entrar em operacao.
      * ----------------------------------------------------- */
 
     if (!interruptor_ligado) {
         /*
-         * Desligar a estacao nao pode interromper
+         * Desligar a estacao nao interrompe
          * o resfriamento de um soprador quente.
          */
         desligamento_solicitado = true;
@@ -306,8 +315,7 @@ void station_control_process(
                 if (soprador_na_base) {
                     /*
                      * Base detectada:
-                     * desliga o aquecimento imediatamente
-                     * e inicia o resfriamento seguro.
+                     * desliga o aquecimento e resfria.
                      */
                     estado_atual = ESTADO_RESFRIAMENTO_SEGURO;
 
@@ -321,8 +329,8 @@ void station_control_process(
             case ESTADO_RESFRIAMENTO_SEGURO:
 
                 /*
-                 * Mantem a fan no maximo ate confirmar
-                 * temperatura <= 60 graus Celsius.
+                 * Mantem a fan no maximo ate a temperatura
+                 * medida chegar a 60 graus Celsius ou menos.
                  */
                 if (frio_o_suficiente) {
                     if (desligamento_solicitado ||
@@ -364,10 +372,6 @@ void station_control_process(
 
             commands->triac_power_command = 0U;
 
-            /*
-             * Frio: fan desligada.
-             * Quente: fan no maximo para resfriar.
-             */
             commands->fan_pwm_command = frio_o_suficiente
                 ? FAN_PWM_OFF
                 : FAN_PWM_MAX;
@@ -381,41 +385,27 @@ void station_control_process(
             commands->triac_power_command = 0U;
             commands->shutdown_requested = false;
 
-            /*
-             * CORRECAO PRINCIPAL:
-             *
-             * Soprador na base e temperatura <= 60 C:
-             * desliga a fan.
-             *
-             * Temperatura > 60 C:
-             * mantem a fan no maximo.
-             *
-             * O potenciometro nao deve manter a fan ligada
-             * quando o soprador esta frio e na base.
-             */
-
-            if (frio_o_suficiente) {
-                commands->fan_pwm_command = FAN_PWM_OFF;
-            } else {
-                commands->fan_pwm_command = FAN_PWM_MAX;
-            }
+            commands->fan_pwm_command = frio_o_suficiente
+                ? FAN_PWM_OFF
+                : FAN_PWM_MAX;
 
             break;
 
         case ESTADO_EM_OPERACAO: {
             commands->shutdown_requested = false;
 
-            /*
-             * Fora da base:
-             * segue o potenciometro, respeitando
-             * o limite minimo configurado.
-             */
             commands->fan_pwm_command =
                 limitar_fan_operacao(fan_final);
 
+            /*
+             * A curva de aproximacao e a frenagem ficam
+             * exclusivamente dentro de pid_compute().
+             */
             int output = pid_compute(
                 &termostato,
-                temperatura
+                temperatura,
+                PID_INTERVAL_SECONDS,
+                100.0f
             );
 
             if (output < 0) {
@@ -431,10 +421,6 @@ void station_control_process(
 
         case ESTADO_RESFRIAMENTO_SEGURO:
 
-            /*
-             * Durante o resfriamento:
-             * resistencia desligada e fan no maximo.
-             */
             commands->triac_power_command = 0U;
             commands->fan_pwm_command = FAN_PWM_MAX;
             commands->shutdown_requested = false;
@@ -451,7 +437,7 @@ void station_control_process(
     }
 
     /* -----------------------------------------------------
-     * 6. PROTECAO FINAL INDEPENDENTE DO ESTADO
+     * 6. PROTECAO FINAL DE SENSOR E RESFRIAMENTO
      * ----------------------------------------------------- */
 
     if (!sensor_seguro(hardware)) {
@@ -461,8 +447,8 @@ void station_control_process(
     }
 
     /*
-     * Se estiver acima de 60 C e nao estiver aquecendo,
-     * nunca desligar a fan.
+     * Fora do estado de operacao, manter ventilacao
+     * enquanto a temperatura medida estiver acima de 60 C.
      */
     if (hardware->temperature_centi > TEMP_RESFRIADO_CENTI &&
         estado_atual != ESTADO_EM_OPERACAO) {

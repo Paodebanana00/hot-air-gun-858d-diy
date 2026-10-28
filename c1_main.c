@@ -46,7 +46,7 @@ static THD_FUNCTION(EngineThread, arg)
             core1_publish_commands(&commands);
         }
 
-        chThdSleepMilliseconds(20);
+        chThdSleepMilliseconds(10);
     }
 }
 
