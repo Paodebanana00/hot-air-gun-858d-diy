@@ -16,7 +16,7 @@
 #define TEMP_RESFRIADO_CENTI            6000
 
 #define SETPOINT_MIN_C                  0
-#define SETPOINT_MAX_C                  100
+#define SETPOINT_MAX_C                  450
 
 #define PID_KP                          2.5f
 #define PID_KI                          0.08f
