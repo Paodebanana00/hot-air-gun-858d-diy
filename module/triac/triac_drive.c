@@ -11,19 +11,13 @@
 #define POTENCIA_MIN            0
 #define POTENCIA_MAX            100
 
-/*
- * Intervalo entre decisoes de acionamento.
- *
- * O MOC3041 e um optotriac com deteccao de cruzamento
- * por zero. Nao usamos controle de angulo de fase.
- */
+
 #define TRIAC_SLOT_MS           10U
 
 /*
  * Circuito PNP:
- *
- * GPIO HIGH -> transistor desligado -> LED do MOC apagado
- * GPIO LOW  -> transistor ligado    -> LED do MOC aceso
+ * GPIO HIGH -> transistor desligado.
+ * GPIO LOW  -> transistor ligado.
  */
 
 static volatile int potencia_solicitada = 0;
@@ -63,39 +57,20 @@ static THD_FUNCTION(TriacDriverThread, arg)
 
     chRegSetThreadName("driver_moc3041");
 
-    /*
-     * Inicializacao segura: nao solicitar disparo.
-     */
     triac_desacionar();
 
     /*
      * Acumulador de densidade de pulsos.
-     *
-     * A cada slot:
-     *   acumulador += potencia
-     *
-     * Ao atingir 100, ativa um slot e subtrai 100.
-     *
-     * Isso distribui os slots ativos ao longo do tempo,
-     * em vez de concentrar toda a potencia no inicio
-     * de uma janela longa.
      */
     uint32_t acumulador = 0U;
-
-    systime_t proximo_slot = chVTGetSystemTimeX();
 
     while (true) {
         const int potencia = ler_potencia_solicitada();
 
         if (potencia == 0) {
-            /*
-             * Desligamento imediato do LED do optotriac.
-             * O triac de potencia ja disparado pode continuar
-             * conduzindo ate a proxima passagem por zero.
-             */
             acumulador = 0U;
             triac_desacionar();
-        } else if (potencia >= 100) {
+        } else if (potencia >= POTENCIA_MAX) {
             acumulador = 0U;
             triac_acionar();
         } else {
@@ -109,27 +84,26 @@ static THD_FUNCTION(TriacDriverThread, arg)
             }
         }
 
-        proximo_slot += TIME_MS2I(TRIAC_SLOT_MS);
-        chThdSleepUntil(proximo_slot);
+        chThdSleepMilliseconds(TRIAC_SLOT_MS);
     }
 }
 
 void triac_driver_init(void)
 {
-    /*
-     * Configura e desliga a saida antes de criar a thread.
-     */
     palSetLineMode(PIN_TRIAC, PAL_MODE_OUTPUT_PUSHPULL);
+
     triac_desacionar();
 
+    chSysLock();
     potencia_solicitada = 0;
+    chSysUnlock();
 
     chThdCreateStatic(
         waTriacDriverThread,
         sizeof(waTriacDriverThread),
-        NORMALPRIO,
-        TriacDriverThread,
-        NULL
+                      NORMALPRIO,
+                      TriacDriverThread,
+                      NULL
     );
 }
 
