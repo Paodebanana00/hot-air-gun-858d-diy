@@ -1,4 +1,3 @@
-
 #ifndef PID_H
 #define PID_H
 
@@ -13,11 +12,15 @@ typedef struct {
     float limite_max;
     float setpoint;
 
+    /* Estado integral */
     float i_term;
+
+    /* Estado derivativo */
     float temperatura_anterior;
     float derivada_filtrada;
 
     bool medicao_inicializada;
+
 } pid_controller_t;
 
 void pid_init(
@@ -29,7 +32,11 @@ void pid_init(
     float maximo
 );
 
-void pid_set_target(pid_controller_t *pid, float target);
+void pid_set_target(
+    pid_controller_t *pid,
+    float target
+);
+
 void pid_reset(pid_controller_t *pid);
 
 int pid_compute(

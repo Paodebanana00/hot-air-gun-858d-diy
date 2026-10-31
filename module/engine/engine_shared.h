@@ -1,6 +1,6 @@
 #ifndef ENGINE_SHARED_H
 #define ENGINE_SHARED_H
-
+#include "ch.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -12,6 +12,10 @@ typedef struct {
     bool temperature_valid;
     uint32_t thermocouple_raw;
     uint32_t thermocouple_status;
+
+    /* Identificacao da amostra do MAX6675. */
+    uint32_t thermocouple_sequence;
+    systime_t thermocouple_timestamp;
 
     uint32_t fan_pot_raw;
     int32_t temperature_setpoint;

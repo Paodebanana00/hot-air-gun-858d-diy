@@ -1,3 +1,4 @@
+
 #include "module/engine/engine_shared.h"
 
 #include "ch.h"
@@ -7,9 +8,9 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
+
 /*
  * RP2040 SIO hardware spinlock.
- * O lock 30 precisa estar reservado exclusivamente para este módulo.
  */
 #define ENGINE_SHARED_SPINLOCK  30U
 #define SIO_SPINLOCK_BASE       0xD0000100UL
@@ -52,6 +53,7 @@ static void shared_unlock(void)
 
 void engine_shared_init(void)
 {
+    shared_lock();
     memset(&shared_state, 0, sizeof(shared_state));
     memset(&shared_commands, 0, sizeof(shared_commands));
     memset(&shared_diagnostic, 0, sizeof(shared_diagnostic));
@@ -69,6 +71,8 @@ void engine_shared_init(void)
 
     ENGINE_MEMORY_BARRIER();
     shared_initialized = true;
+
+    shared_unlock();
 }
 
 void core0_publish_state(const core0_state_t *state)
@@ -78,8 +82,10 @@ void core0_publish_state(const core0_state_t *state)
     }
 
     shared_lock();
+
     shared_state = *state;
     state_published = true;
+
     shared_unlock();
 }
 
@@ -109,8 +115,10 @@ void core1_publish_commands(const core1_commands_t *commands)
     }
 
     shared_lock();
+
     shared_commands = *commands;
     commands_published = true;
+
     shared_unlock();
 }
 
@@ -141,8 +149,10 @@ void core1_publish_diagnostic(
     }
 
     shared_lock();
+
     shared_diagnostic = *diagnostic;
     diagnostic_published = true;
+
     shared_unlock();
 }
 

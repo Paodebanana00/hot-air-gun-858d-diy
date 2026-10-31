@@ -26,6 +26,9 @@ core1_commands_t commands = {0};
 static volatile uint32_t applied_triac_power = 0;
 static volatile uint32_t applied_fan_pwm = 4095;
 
+static uint32_t thermocouple_sequence = 0U;
+static systime_t thermocouple_timestamp = 0U;
+
 /* ============================================================
  * THREAD DE TELEMETRIA USB
  *
@@ -132,8 +135,14 @@ int main(void)
     while (true) {
         float temperature = 0.0f;
 
-        bool valid =
-            thermocouple_get_temperature(&temperature);
+        uint32_t sample_sequence = thermocouple_sequence;
+        systime_t sample_timestamp = thermocouple_timestamp;
+
+        bool valid = thermocouple_get_sample(
+            &temperature,
+            &sample_sequence,
+            &sample_timestamp
+        );
 
         /* 1. Atualiza as entradas físicas. */
         hw_state.sequence++;
@@ -143,6 +152,9 @@ int main(void)
         if (valid) {
             hw_state.temperature_centi =
                 (int32_t)(temperature * 100.0f);
+
+            thermocouple_sequence = sample_sequence;
+            thermocouple_timestamp = sample_timestamp;
         }
 
         hw_state.thermocouple_raw =
@@ -164,7 +176,12 @@ int main(void)
         hw_state.button_state_2 =
             estado_sistema_2 ? 1U : 0U;
 
-        /* 2. Publica o snapshot físico para o Core 1. */
+        hw_state.thermocouple_sequence =
+            thermocouple_sequence;
+
+        hw_state.thermocouple_timestamp =
+            thermocouple_timestamp;
+
         core0_publish_state(&hw_state);
 
         /*

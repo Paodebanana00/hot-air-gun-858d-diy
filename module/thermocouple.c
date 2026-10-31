@@ -1,3 +1,4 @@
+
 #include "ch.h"
 #include "hal.h"
 #include "thermocouple.h"
@@ -30,13 +31,6 @@ static const SPIConfig max6675_spi_config = {
 /* Intervalo entre leituras do termopar. */
 #define THERMOCOUPLE_PERIOD_MS 250U
 
-/*
- * Filtro EMA:
- * 0.15 = suavização moderada.
- * Valores menores suavizam mais, mas respondem mais lentamente.
- */
-#define EMA_ALPHA 0.15f
-
 static max6675_t temp_sensor;
 static THD_WORKING_AREA(waThermocoupleThread, 512);
 
@@ -46,11 +40,12 @@ static volatile bool temperature_valid = false;
 static volatile uint16_t latest_raw = 0U;
 static volatile uint8_t latest_status = MAX6675_NO_READING;
 
+/* Controle das amostras */
+static volatile uint32_t latest_sequence = 0U;
+static volatile systime_t latest_timestamp = 0U;
+
 static THD_FUNCTION(ThermocoupleThread, arg) {
     (void)arg;
-
-    float filtered_temp = 0.0f;
-    bool first_reading = true;
 
     chRegSetThreadName("MAX6675_SPI1");
 
@@ -58,47 +53,33 @@ static THD_FUNCTION(ThermocoupleThread, arg) {
         uint8_t status;
         uint16_t raw;
         float temperature;
-        float next_filtered_temp = 0.0f;
 
         status = max6675_read(&temp_sensor);
         raw = temp_sensor.raw;
         temperature = max6675_get_celsius(&temp_sensor);
 
-        if (status == MAX6675_OK) {
-            if (first_reading) {
-                /*
-                 * Inicializa o filtro com a primeira leitura válida,
-                 * evitando começar artificialmente em 0 °C.
-                 */
-                next_filtered_temp = temperature;
-                first_reading = false;
-            } else {
-                next_filtered_temp =
-                    (EMA_ALPHA * temperature) +
-                    ((1.0f - EMA_ALPHA) * filtered_temp);
-            }
-
-            filtered_temp = next_filtered_temp;
-        } else {
-            /*
-             * Uma leitura inválida invalida a temperatura publicada.
-             * A próxima leitura válida reinicializará o filtro.
-             */
-            first_reading = true;
-        }
+        /*
+         * Publica diretamente a leitura do MAX6675.
+         * Nenhum filtro digital aplicado.
+         */
+        const systime_t timestamp = chVTGetSystemTimeX();
 
         /*
-         * Mantém a região crítica curta: apenas publicação dos dados
-         * compartilhados, sem cálculos de ponto flutuante.
+         * Mantém a região crítica curta:
+         * apenas publicação dos dados compartilhados.
          */
+
         chSysLock();
 
         latest_raw = raw;
         latest_status = status;
 
         if (status == MAX6675_OK) {
-            latest_temperature = next_filtered_temp;
+            latest_temperature = temperature;
             temperature_valid = true;
+
+            latest_timestamp = timestamp;
+            latest_sequence++;
         } else {
             temperature_valid = false;
         }
@@ -163,4 +144,42 @@ uint8_t thermocouple_get_status(void) {
     chSysUnlock();
 
     return status;
+}
+
+/*
+ * Obtém uma amostra completa do termopar.
+ *
+ * Retorna:
+ * - Temperatura em graus Celsius.
+ * - Contador de amostras válidas.
+ * - Timestamp da aquisição.
+ *
+ * Os três valores são obtidos na mesma região crítica.
+ */
+bool thermocouple_get_sample(
+    float *temperature,
+    uint32_t *sequence,
+    systime_t *timestamp
+) {
+    bool valid;
+
+    if (temperature == NULL ||
+        sequence == NULL ||
+        timestamp == NULL) {
+        return false;
+    }
+
+    chSysLock();
+
+    valid = temperature_valid;
+
+    if (valid) {
+        *temperature = latest_temperature;
+        *sequence = latest_sequence;
+        *timestamp = latest_timestamp;
+    }
+
+    chSysUnlock();
+
+    return valid;
 }
