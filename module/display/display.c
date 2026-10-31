@@ -44,8 +44,6 @@ void display_update(const core0_state_t *state)
         // Verifica se o Triac está aplicando potência na resistência
         const char *heater_status = (state->triac_power_applied > 0U) ? "ON " : "OFF";
 
-        // Monta a linha 1 cravando exatamente 16 caracteres para limpar a tela
-        // %3ld.%1ld ocupa 5 espaços, \xDF (1 espaço), C (1 espaço), %3s (3 espaços do ON/OFF)
         snprintf(
             line1,
             sizeof(line1),
