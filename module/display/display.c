@@ -30,34 +30,35 @@ void display_update(const core0_state_t *state)
     char line2[17];
 
     if (!state->temperature_valid) {
-
-        snprintf(line1, sizeof(line1), "SENSOR ERROR");
-        snprintf(line2, sizeof(line2), "HEATER: OFF");
+        snprintf(line1, sizeof(line1), "%-16s", "SENSOR ERROR");
+        snprintf(line2, sizeof(line2), "%-16s", "HEATER: OFF");
 
     } else if (state->hardware_faults != 0U) {
-
-        snprintf(line1, sizeof(line1), "HARDWARE FAULT");
-        snprintf(line2, sizeof(line2), "CHECK STATION");
+        snprintf(line1, sizeof(line1), "%-16s", "HARDWARE FAULT");
+        snprintf(line2, sizeof(line2), "%-16s", "CHECK STATION");
 
     } else {
-
         int32_t temp = state->temperature_centi;
+        uint32_t fan = (state->fan_pwm_applied * 100U) / 4095U;
 
-        uint32_t fan =
-            (state->fan_pwm_applied * 100U) / 4095U;
+        // Verifica se o Triac está aplicando potência na resistência
+        const char *heater_status = (state->triac_power_applied > 0U) ? "ON " : "OFF";
 
+        // Monta a linha 1 cravando exatamente 16 caracteres para limpar a tela
+        // %3ld.%1ld ocupa 5 espaços, \xDF (1 espaço), C (1 espaço), %3s (3 espaços do ON/OFF)
         snprintf(
             line1,
             sizeof(line1),
-            "TEMP:%3ld.%1ldC",
+            "TEMP:%3ld.%1ld" "\xDF" "C %3s",
             (long)(temp / 100),
-            (long)((temp % 100) / 10)
+            (long)((temp % 100) / 10),
+            heater_status
         );
 
         snprintf(
             line2,
             sizeof(line2),
-            "SET:%3ld FAN:%2lu%%",
+            "SET:%3ld FAN:%2lu%%  ",
             (long)state->temperature_setpoint,
             (unsigned long)fan
         );

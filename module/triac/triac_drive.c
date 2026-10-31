@@ -90,6 +90,10 @@ static THD_FUNCTION(TriacDriverThread, arg)
 
 void triac_driver_init(void)
 {
+    /* Define primeiro o estado de desligado. */
+    palWriteLine(PIN_TRIAC, PAL_HIGH);
+
+    /* Depois configura o GPIO como saída. */
     palSetLineMode(PIN_TRIAC, PAL_MODE_OUTPUT_PUSHPULL);
 
     triac_desacionar();
@@ -101,12 +105,11 @@ void triac_driver_init(void)
     chThdCreateStatic(
         waTriacDriverThread,
         sizeof(waTriacDriverThread),
-                      NORMALPRIO,
-                      TriacDriverThread,
-                      NULL
+        NORMALPRIO,
+        TriacDriverThread,
+        NULL
     );
 }
-
 void triac_set_power(int power)
 {
     if (power < POTENCIA_MIN) {
