@@ -36,15 +36,16 @@ include $(CHIBIOS)/os/common/ports/ARMv6-M/compilers/GCC/mk/port_rp2.mk
 # Placa
 include $(BOARDPATH)/board.mk
 
-# Evita adicionar novamente os drivers antigos que a plataforma
-# RP2040 do Contrib substitui, conforme o Makefile original.
+# Evita adicionar novamente os drivers antigos substituídos
+# pela plataforma RP2040 do ChibiOS-Contrib.
 ALLCSRC := $(filter-out \
     $(CHIBIOS)/os/hal/ports/RP/LLD/ADCv1/hal_adc_lld.c \
     $(CHIBIOS)/os/hal/ports/RP/LLD/PWMv1/hal_pwm_lld.c \
-    $(CHIBIOS)/os/hal/ports/RP/LLD/USBv1/hal_usb_lld.c, \
+    $(CHIBIOS)/os/hal/ports/RP/LLD/USBv1/hal_usb_lld.c \
+    $(CHIBIOS)/os/hal/ports/RP/LLD/I2Cv1/hal_i2c_lld.c, \
     $(ALLCSRC))
 
-# Fontes da aplicação e das bibliotecas
+# Fontes da aplicação e bibliotecas
 CSRC = $(sort \
     $(ALLCSRC) \
     $(HALSRC_CONTRIB) \
@@ -54,16 +55,18 @@ CSRC = $(sort \
     c1_main.c \
     module/thermocouple.c \
     module/usbcfg.c \
-    module/potentiometers.c\
-    module/convert/potentiometer_converter.c\
-    module/json/usb_cdc_handler.c\
-    module/pwm/pwm_fan.c\
-    module/bootloader/rp2040.c\
-    module/triac/triac_drive.c\
-    module/switchs/switchs.c\
-    module/engine/engine_shared.c\
-    module/engine/station_control.c\
-    module/pid/pid.c)
+    module/potentiometers.c \
+    module/convert/potentiometer_converter.c \
+    module/json/usb_cdc_handler.c \
+    module/pwm/pwm_fan.c \
+    module/bootloader/rp2040.c \
+    module/triac/triac_drive.c \
+    module/switchs/switchs.c \
+    module/engine/engine_shared.c \
+    module/engine/station_control.c \
+    module/pid/pid.c \
+    module/display/display.c\
+    module/display/lcd1602.c)
 
 CPPSRC = $(ALLCPPSRC)
 ASMSRC = $(ALLASMSRC)
@@ -72,11 +75,12 @@ ASMXSRC = $(ALLXASMSRC)
 # Inicialização e dual-core
 UDEFS = -DCRT0_VTOR_INIT=1 \
         -DCRT0_EXTRA_CORES_NUMBER=1 \
-        -DNDEBUG
+        -DNDEBUG \
+        -include $(CURDIR)/cfg/compiler_compat.h
 
 UADEFS = -DCRT0_VTOR_INIT=1 \
          -DCRT0_EXTRA_CORES_NUMBER=1
-
+LDFLAGS += --specs=nano.specs --specs=nosys.specs
 ULIBDIR =
 ULIBS =
 
@@ -87,9 +91,9 @@ INCDIR = $(CONFDIR) \
          $(PLATFORMINC_CONTRIB) \
          $(CHIBIOS_CONTRIB)/os/hal/include \
          module \
+         module/display \
          drives_max6675 \
          $(CHIBIOS)/os/hal/lib/streams
-         
 
 # Linker
 LDSCRIPT = $(STARTUPLD)/RP2040_FLASH.ld
@@ -119,6 +123,13 @@ flash: $(BUILDDIR)/$(PROJECT).uf2
 	@echo "Aguardando a Pico entrar em BOOTSEL..."
 	@sleep $(BOOTSEL_WAIT)
 	@echo "Gravando firmware UF2..."
+	$(PICOTOOL) load -f $(BUILDDIR)/$(PROJECT).uf2
+	@sleep 1
+	@echo "Reiniciando a aplicação..."
+	$(PICOTOOL) reboot -a
+
+flash1: $(BUILDDIR)/$(PROJECT).uf2
+
 	$(PICOTOOL) load -f $(BUILDDIR)/$(PROJECT).uf2
 	@sleep 1
 	@echo "Reiniciando a aplicação..."

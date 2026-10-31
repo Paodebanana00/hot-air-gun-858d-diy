@@ -1,9 +1,9 @@
-
 #include "ch.h"
 #include "hal.h"
 
 #include "module/engine/engine_shared.h"
 #include "module/engine/station_control.h"
+#include "module/display/display.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -14,9 +14,10 @@
 
 #define ENGINE_CONTROL_INTERVAL_MS  10U
 #define DIAGNOSTIC_INTERVAL_MS      200U
+#define DISPLAY_UPDATE_INTERVAL_MS  200U
 
 /* ============================================================
- * THREAD 1: CONTROLE DA MAQUINA DE ESTADOS
+ * THREAD 1: CONTROLE
  * ============================================================ */
 
 static THD_WORKING_AREA(waEngineThread, 768);
@@ -31,26 +32,16 @@ static THD_FUNCTION(EngineThread, arg)
     core1_commands_t commands = {0};
 
     while (true) {
+
         if (core0_read_state(&hardware)) {
-            /*
-             * Calcula as saidas de controle.
-             * station_control_process deve chamar pid_compute
-             * somente uma vez por ciclo de controle.
-             */
+
             station_control_process(&hardware, &commands);
 
-            /*
-             * Publica o setpoint em centesimos de grau.
-             * Verifique se este campo e usado por outros modulos.
-             */
             commands.target_temperature_centi =
-            hardware.temperature_setpoint * 100;
+                hardware.temperature_setpoint * 100;
 
             commands.sequence++;
 
-            /*
-             * Publica os comandos para o Core 0.
-             */
             core1_publish_commands(&commands);
         }
 
@@ -74,27 +65,22 @@ static THD_FUNCTION(DiagnosticThread, arg)
     core1_diagnostic_t diagnostic = {0};
 
     while (true) {
-        if (core0_read_state(&hardware)) {
-            diagnostic.sequence = hardware.sequence;
-            diagnostic.temperature_centi =
-            hardware.temperature_centi;
-            diagnostic.temperature_valid =
-            hardware.temperature_valid;
-            diagnostic.thermocouple_raw =
-            hardware.thermocouple_raw;
-            diagnostic.thermocouple_status =
-            hardware.thermocouple_status;
-            diagnostic.fan_pot_raw =
-            hardware.fan_pot_raw;
-            diagnostic.temperature_setpoint =
-            hardware.temperature_setpoint;
 
-            diagnostic.button_state_1 =
-            hardware.button_state_1;
-            diagnostic.button_state_2 =
-            hardware.button_state_2;
-            diagnostic.hardware_faults =
-            hardware.hardware_faults;
+        if (core0_read_state(&hardware)) {
+
+            diagnostic.sequence = hardware.sequence;
+            diagnostic.temperature_centi = hardware.temperature_centi;
+            diagnostic.temperature_valid = hardware.temperature_valid;
+            diagnostic.thermocouple_raw = hardware.thermocouple_raw;
+            diagnostic.thermocouple_status = hardware.thermocouple_status;
+
+            diagnostic.fan_pot_raw = hardware.fan_pot_raw;
+            diagnostic.temperature_setpoint = hardware.temperature_setpoint;
+
+            diagnostic.button_state_1 = hardware.button_state_1;
+            diagnostic.button_state_2 = hardware.button_state_2;
+
+            diagnostic.hardware_faults = hardware.hardware_faults;
 
             core1_publish_diagnostic(&diagnostic);
         }
@@ -104,35 +90,71 @@ static THD_FUNCTION(DiagnosticThread, arg)
 }
 
 /* ============================================================
+ * THREAD 3: DISPLAY LCD
+ * ============================================================ */
+
+static THD_WORKING_AREA(waDisplayThread, 768);
+
+static THD_FUNCTION(DisplayThread, arg)
+{
+    (void)arg;
+
+    chRegSetThreadName("lcd_display");
+
+    core0_state_t hardware = {0};
+
+    display_init();
+
+    while (true) {
+
+        if (core0_read_state(&hardware)) {
+            display_update(&hardware);
+        }
+
+        chThdSleepMilliseconds(DISPLAY_UPDATE_INTERVAL_MS);
+    }
+}
+
+/* ============================================================
  * ENTRADA DO CORE 1
  * ============================================================ */
 
 void c1_main(void)
 {
-    /*
-     * Inicializacao multicore mantida conforme
-     * a estrutura original do projeto.
-     */
     chSysWaitSystemState(ch_sys_running);
 
     chInstanceObjectInit(&ch1, &ch_core1_cfg);
 
     chSysUnlock();
 
+    /* Controle da estação */
+
     chThdCreateStatic(
         waEngineThread,
         sizeof(waEngineThread),
-                      NORMALPRIO + 1,
-                      EngineThread,
-                      NULL
+        NORMALPRIO + 1,
+        EngineThread,
+        NULL
     );
+
+    /* Diagnóstico */
 
     chThdCreateStatic(
         waDiagnosticThread,
         sizeof(waDiagnosticThread),
-                      NORMALPRIO,
-                      DiagnosticThread,
-                      NULL
+        NORMALPRIO,
+        DiagnosticThread,
+        NULL
+    );
+
+    /* Interface LCD */
+
+    chThdCreateStatic(
+        waDisplayThread,
+        sizeof(waDisplayThread),
+        NORMALPRIO - 1,
+        DisplayThread,
+        NULL
     );
 
     while (true) {

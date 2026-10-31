@@ -41,6 +41,7 @@
 /*
  * IRQ system settings.
  */
+#define RP_IRQ_I2C1_PRIORITY                2
 #define RP_IRQ_ADC1_PRIORITY                2
 #define RP_IRQ_SYSTICK_PRIORITY             2
 #define RP_IRQ_TIMER_ALARM0_PRIORITY        2
@@ -94,5 +95,13 @@
 #define RP_USB_USE_ERROR_DATA_SEQ_INTR      TRUE
 
 #define RP_ADC_USE_ADC1 TRUE
+
+
+
+/*
+ * I2C driver system settings.
+ */
+#define RP_I2C_USE_I2C0                    FALSE
+#define RP_I2C_USE_I2C1                    TRUE
 
 #endif /* MCUCONF_H */
