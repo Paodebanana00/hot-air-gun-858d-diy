@@ -1,6 +1,6 @@
 #ifndef TRIAC_DRIVER_H
 #define TRIAC_DRIVER_H
-
+#define PIN_TRIAC               PAL_LINE(IOPORT1, 0U)
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -1,12 +1,9 @@
-
 #include "ch.h"
 #include "hal.h"
 #include "module/triac/triac_drive.h"
 
 #include <stdbool.h>
 #include <stdint.h>
-
-#define PIN_TRIAC               PAL_LINE(IOPORT1, 0U)
 
 #define POTENCIA_MIN            0
 #define POTENCIA_MAX            100
