@@ -17,7 +17,7 @@
 /* Temperaturas configuraveis em graus Celsius */
 #define TEMP_RESFRIADO_C                60
 #define TEMP_SETPOINT_MIN_C              0
-#define TEMP_SETPOINT_MAX_C            450
+#define TEMP_SETPOINT_MAX_C            500
 
 /* Conversao para centesimos de grau Celsius */
 #define TEMP_RESFRIADO_CENTI \

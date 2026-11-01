@@ -7,9 +7,6 @@
 #include <stddef.h>
 #include <stdbool.h>
 
-/* ============================================================
- * STUBS BARE-METAL PARA CALAR O GCC 14 (FORÇA BRUTA)
- * ============================================================ */
 #include <sys/stat.h>
 #include <sys/types.h>
 
