@@ -28,7 +28,7 @@
 
 /* Parametros do PID */
 #define PID_KP                          2.5f
-#define PID_KI                          0.08f
+#define PID_KI                          0.15f
 #define PID_KD                          0.4f
 
 #define PID_MAX_OUTPUT                  100.0f
