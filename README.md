@@ -22,7 +22,7 @@ cd hot-air-gun-858d-diy
 ### 2. Compilar o Projeto
 Para buildar o projeto e gerar o arquivo `.elf` e o binário `.uf2`:
 ```bash
-make
+make uf2
 ```
 *(O binário final será gerado dentro da pasta `./build`)*
 
