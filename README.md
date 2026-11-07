@@ -66,7 +66,7 @@ Para montar esta estação utilizando uma placa perfurada universal, você preci
 * **Resistores do Bloco PWM:**
   * 1x Resistor de $1\,\text{k}\Omega$ (em série com o diodo 1N4148 na malha de acionamento da base).
   * 1x Resistor de $4,7\,\text{k}\Omega$ (configurado como *Pull-Down* na base do BC337).
-  * 2x Resistores de $47\,\Omega$ (utilizados no divisor/limitação de corrente para os transistores).
+  * 2x Resistores de $47\,\Omega$ (limitação de corrente para os transistores).
 
 ### 5. Sistema de Alimentação (Sugestões de Montagem)
 * **Versão Utilizada no Protótipo:** Fonte chaveada de 12V convencional, elevando a tensão para 24V através de um módulo Booster **XL6019**, além de uma linha secundária de 5V para o display/lógica.
