@@ -35,7 +35,11 @@ make flash
 ```
 *Se a sua porta USB for diferente, você pode passar o parâmetro:* `make flash CDC_PORT=/dev/ttyUSB0`
 
-
+**Método Manual (Primeira Gravação):**
+Se a placa estiver zerada ou se você colocou a Pico em modo BOOTSEL segurando o botão físico da placa ao conectar no PC, use o comando direto sem o reset via serial:
+```bash
+make flash1
+```
 ## 📦 Lista de Componentes Básicos (BOM)
 
 Para montar esta estação utilizando uma placa perfurada universal, você precisará dos seguintes componentes:
@@ -97,8 +101,4 @@ Siga o procedimento abaixo para fazer uma modificação híbrida: manter o brilh
 * **Proteção Total:** A comunicação I2C trafega rigidamente no nível seguro de 3.3V nativo do RP2040.
 * **Imunidade a Ruídos:** Os resistores físicos de 4.7kΩ garantem um barramento robusto que impede o travamento da tela ou caracteres corrompidos ("tela rachada") causados pelo ruído do chaveamento do Triac e do PWM da fan.
 * **Contraste:** Após ligar tudo, ajuste o trimpot azul traseiro do módulo até obter a melhor nitidez das letras.
-**Método Manual (Primeira Gravação):**
-Se a placa estiver zerada ou se você colocou a Pico em modo BOOTSEL segurando o botão físico da placa ao conectar no PC, use o comando direto sem o reset via serial:
-```bash
-make flash1
-```
+
