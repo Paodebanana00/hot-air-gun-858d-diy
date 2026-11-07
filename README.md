@@ -72,7 +72,31 @@ Para montar esta estação utilizando uma placa perfurada universal, você preci
 * **Versão Utilizada no Protótipo:** Fonte chaveada de 12V convencional, elevando a tensão para 24V através de um módulo Booster **XL6019**, além de uma linha secundária de 5V para o display/lógica.
 * **Recomendação Ideal para Próximas Montagens:** Utilizar uma única **Fonte de 24V** nativa (para alimentar o cooler diretamente) combinada a um conversor **Step-Down** (ou regulador linear tipo o LM7805 com dissipador) para rebaixar e alimentar a linha de 5V e 3.3V do circuito de controle.
 
+## 🛠️ Modificação Obrigatória: Display LCD 1602 I2C no RP2040
 
+> ⚠️ **ATENÇÃO:** Os módulos adaptadores I2C comerciais (PCF8574) vêm com resistores de pull-up interligados nos 5V. Como a Raspberry Pi Pico tolera **apenas 3.3V**, ligar o módulo direto da fábrica vai injetar 5V nos pinos da Pico e **queimar o microcontrolador**. 
+
+Siga o procedimento abaixo para fazer uma modificação híbrida: manter o brilho máximo no LCD e proteger a lógica em 3.3V.
+
+### 1. Modificação Física no Módulo I2C (PCF8574)
+* **Remova os Pull-ups de 5V:** Localize e remova completamente os dois resistores SMD com a inscrição **472** (4.7kΩ) que ficam próximos ao chip PCF8574. Encoste o ferro de solda deitado sobre eles para sacá-los da placa.
+* Com isso, as linhas SDA e SCL do módulo ficam em modo Dreno Aberto puro, totalmente isoladas da tensão de 5V.
+
+### 2. Nova Conexão de Alimentação e Dados
+* **VCC do LCD:** Ligue direto no pino **VBUS (5V)** da Pico ou na linha de **4.8V/5V** da sua fonte principal. (Isso garante contraste e brilho máximo nos dígitos brancos).
+* **GND do LCD:** Ligue no GND comum do circuito.
+* **Linhas de Dados:** Conecte o **SDA no GP18** e o **SCL no GP19** (Barramento I2C0). 
+  * *Nota de projeto:* Usar essa extremidade inferior afasta os fios sensíveis da fiação de potência do Triac e do cooler, mitigando interferências eletromagnéticas (EMI).
+
+### 3. Instalação dos Pull-ups Externos em 3.3V (O Segredo da Estabilidade)
+* Pegue dois resistores comuns de terminal de **4.7kΩ** (ou reaproveite os SMDs se tiver as manhas) e instale-os externamente na placa perfurada:
+  * Um resistor ligando a linha **SDA (GP18) ao pino de 3.3V** da Pico.
+  * Um resistor ligando a linha **SCL (GP19) ao pino de 3.3V** da Pico.
+
+### 📈 Resultado Esperado
+* **Proteção Total:** A comunicação I2C trafega rigidamente no nível seguro de 3.3V nativo do RP2040.
+* **Imunidade a Ruídos:** Os resistores físicos de 4.7kΩ garantem um barramento robusto que impede o travamento da tela ou caracteres corrompidos ("tela rachada") causados pelo ruído do chaveamento do Triac e do PWM da fan.
+* **Contraste:** Após ligar tudo, ajuste o trimpot azul traseiro do módulo até obter a melhor nitidez das letras.
 **Método Manual (Primeira Gravação):**
 Se a placa estiver zerada ou se você colocou a Pico em modo BOOTSEL segurando o botão físico da placa ao conectar no PC, use o comando direto sem o reset via serial:
 ```bash
