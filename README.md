@@ -88,7 +88,7 @@ Siga o procedimento abaixo para fazer uma modificação híbrida: manter o brilh
 * **Linhas de Dados:** Conecte o **SDA no GP18** e o **SCL no GP19** (Barramento I2C0). 
   * *Nota de projeto:* Usar essa extremidade inferior afasta os fios sensíveis da fiação de potência do Triac e do cooler, mitigando interferências eletromagnéticas (EMI).
 
-### 3. Instalação dos Pull-ups Externos em 3.3V (O Segredo da Estabilidade)
+### 3. Instalação dos Pull-ups Externos em 3.3V 
 * Pegue dois resistores comuns de terminal de **4.7kΩ** (ou reaproveite os SMDs se tiver as manhas) e instale-os externamente na placa perfurada:
   * Um resistor ligando a linha **SDA (GP18) ao pino de 3.3V** da Pico.
   * Um resistor ligando a linha **SCL (GP19) ao pino de 3.3V** da Pico.
