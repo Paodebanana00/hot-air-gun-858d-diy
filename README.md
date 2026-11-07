@@ -102,3 +102,9 @@ Siga o procedimento abaixo para fazer uma modificação híbrida: manter o brilh
 * **Imunidade a Ruídos:** Os resistores físicos de 4.7kΩ garantem um barramento robusto que impede o travamento da tela ou caracteres corrompidos ("tela rachada") causados pelo ruído do chaveamento do Triac e do PWM da fan.
 * **Contraste:** Após ligar tudo, ajuste o trimpot azul traseiro do módulo até obter a melhor nitidez das letras.
 
+### 6. Interface de Controle (Potenciômetros)
+* **Potenciômetros Lineares (2x 50kΩ ou oq tiver em mãos):** Utilizados para o ajuste fino de Temperatura e Vazão de Ar.
+* **Conexão Analógica de Precisão:**
+  * **Sinais:** Conectados diretamente nos pinos **GP27 (ADC1)** e **GP28 (ADC2)** da Pico.
+  * **Alimentação e Referência:** Ligados estritamente no **Pino 35 (3.3V / ADC_VREF)** e no **Pino 33 (AGND - Terra Analógico)**. 
+  * *Nota de projeto:* O uso do barramento analógico isolado (`AGND` / `AVREF`) é obrigatório para mitigar o ruído gerado pelo chaveamento do TRIAC e do motor, garantindo leituras estáveis no ADC do RP2040 e evitando oscilações no display.
